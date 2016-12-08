@@ -15,4 +15,5 @@
 * [ida and request-queue](ida_and_request-queue.md)
 * [spinlock](spinlock.md)
 * [read-copy-update](read-copy-update.md)
+* work-queue
 
