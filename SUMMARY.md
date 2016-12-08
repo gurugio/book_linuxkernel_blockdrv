@@ -13,4 +13,5 @@
 * [per-cpu변수와 통계 정보(v2.6.11)](per-cpu_statistics.md)
 * [wait-queue](wait-queue.md)
 * [ida and request-queue](ida_and_request-queue.md)
+* spinlock
 
