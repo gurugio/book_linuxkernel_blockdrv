@@ -288,6 +288,88 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 ##work-queue의 내부 구현
 이제 대강 work-queue의 사용법을 알았으니, 내부 구현을 한번 보겠습니다.
 
+###struct work_struct
+이전에 struct blk_mq_hw_ctx 구조체에서 run_work 필드가 work-queue에 추가되는 코드를 봤습니다. run_work필드는 struct delayed_work 구조체이고, struct delayed_work는 struct work_struct구조체에 타이머를 더해서 만들어진 것입니다.
+
+가장 핵심이 되는 struct work_struct 구조체와 struct work_struct 타입의 객체를 초기화하는 ```__INIT_WORK```매크로를 보겠습니다.
+
+```
+struct work_struct {
+	atomic_long_t data;
+	struct list_head entry;
+	work_func_t func;
+};
+
+#define __INIT_WORK(_work, _func, _onstack)				\
+	do {								\
+		__init_work((_work), _onstack);				\
+		(_work)->data = (atomic_long_t) WORK_DATA_INIT();	\
+		INIT_LIST_HEAD(&(_work)->entry);			\
+		(_work)->func = (_func);				\
+	} while (0)
+```
+아주 간단합니다. work-queue의 리스트 헤드에 추가될 리스트 노드와 실행할 함수로 이루어져있습니다.
+* entry: work-queue내부의 리스트에 연결될 리스트 노드
+* func: work-queue에서 해당 작업이 선택되면 func에 저장된 함수
+
+###__queue_work
+struct work_struct 객체를 work-queue에 추가하는 함수입니다. 함수인자는 다음과 같습니다.
+* int cpu: work가 실행될 cpu 번호
+* wq: work가 추가될 work-queue
+* work: struct work_struct 객체 포인터
+
+함수 코드를 보면 가장 먼저 WORK_CPU_
+함수가 하는 일은 사실상 work-queue의 리스트 헤드에 새로운 노드를 추가하는 것이지만, 구현을 보면 간단하지 않습니다. 왜냐면 struct pool_workqueue 라는게 있기 때문입니다.
+
+
+
+
+
+###struct workqueue_struct
+
+workqueue_struct 구조체는 
+
+```
+/*
+ * The externally visible workqueue.  It relays the issued work items to
+ * the appropriate worker_pool through its pool_workqueues.
+ */
+struct workqueue_struct {
+	struct list_head	pwqs;		/* WR: all pwqs of this wq */
+	struct list_head	list;		/* PR: list of all workqueues */
+
+	struct mutex		mutex;		/* protects this wq */
+	int			work_color;	/* WQ: current work color */
+	int			flush_color;	/* WQ: current flush color */
+	atomic_t		nr_pwqs_to_flush; /* flush in progress */
+	struct wq_flusher	*first_flusher;	/* WQ: first flusher */
+	struct list_head	flusher_queue;	/* WQ: flush waiters */
+	struct list_head	flusher_overflow; /* WQ: flush overflow list */
+
+	struct list_head	maydays;	/* MD: pwqs requesting rescue */
+	struct worker		*rescuer;	/* I: rescue worker */
+
+	int			nr_drainers;	/* WQ: drain in progress */
+	int			saved_max_active; /* WQ: saved pwq max_active */
+
+	struct workqueue_attrs	*unbound_attrs;	/* PW: only for unbound wqs */
+	struct pool_workqueue	*dfl_pwq;	/* PW: only for unbound wqs */
+
+	char			name[WQ_NAME_LEN]; /* I: workqueue name */
+
+	/*
+	 * Destruction of workqueue_struct is sched-RCU protected to allow
+	 * walking the workqueues list without grabbing wq_pool_mutex.
+	 * This is used to dump all workqueues from sysrq.
+	 */
+	struct rcu_head		rcu;
+
+	/* hot fields used during command issue, aligned to cacheline */
+	unsigned int		flags ____cacheline_aligned; /* WQ: WQ_* flags */
+	struct pool_workqueue __percpu *cpu_pwqs; /* I: per-cpu pwqs */
+	struct pool_workqueue __rcu *numa_pwq_tbl[]; /* PWR: unbound pwqs indexed by node */
+};
+```
 
 
 
