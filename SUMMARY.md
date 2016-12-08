@@ -10,5 +10,5 @@
 * [pagecache_and_blockdriver](pagecacheand_blockdriver.md)
 * [page-flags](page-flags.md)
 * [시스템콜과 블럭 장치 flush](systemcall_flushblock.md)
-* per-cpu변수와 통계 정보(v2.6.11)
+* [per-cpu변수와 통계 정보(v2.6.11)](per-cpu_statistics.md)
 
