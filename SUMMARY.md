@@ -8,5 +8,5 @@
 * [request-mode](request-mode.md)
 * [multiqueue-mode](multiqueue-mode.md)
 * [pagecache_and_blockdriver](pagecacheand_blockdriver.md)
-* page-flags
+* [page-flags](page-flags.md)
 
