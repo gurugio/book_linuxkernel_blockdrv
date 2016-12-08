@@ -92,3 +92,157 @@ http://www.makelinux.net/books/lkd2/ch13lev1sec3
 마지막으로 BLK_QC_T_NONE을 반환합니다. 그냥 아무 문제 없었다는걸 알려주는 것입니다. 커널이 mybrd_make_request_fn을 호출했을테니 커널에게 문제 없음을 알려주는 것이지요.
 
 더 자세한 설명은 https://www.kernel.org/doc/Documentation/block/biodoc.txt 를 참고하세요.
+
+##bio 발생 실험
+
+```
+[    0.499199] 
+[    0.499199] 
+[    0.499199] mybrd: module loaded
+[    0.499199] 
+[    0.499199] 
+[    0.499199] 
+[    0.500069] mybrd: mybrd major=253
+[    0.500292] mybrd: start mybrd_alloc
+[    0.500559] mybrd: create mybrd:ffff8800065438c0
+[    0.501045] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.501723] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.502222] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.502933] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.503366] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.503964] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.504415] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.505025] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.505463] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.506074] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.506586] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.507263] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.507735] Dev mybrd: unable to read RDB block 0
+[    0.508074] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.508671] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.509109] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff8800065438c0
+[    0.509711] Buffer I/O error on dev mybrd, logical block 0, async page read
+[    0.510176]  mybrd: unable to read partition table
+[    0.510540] mybrd: end mybrd_alloc
+[    0.510801] mybrd: global-mybrd=ffff8800065438c0
+```
+커널로부터 bio 정보가 잘 전달되고있는지 실험을 해보겠습니다.
+
+커널을 부팅했더니 부팅 메세지에 위와같이 메시지가 나타납니다. mybrd_init()이 제대로 호출된걸 확인할 수 있고, 그 다음에 mybrd_alloc()에서 출력한 메세지들도 보이네요. 그리고 mybrd_make_request_fn()가 호출된 것도 보입니다. mybrd_make_request_fn()에서는 분명 bio의 정보들을 출력해야되는데 이상하게 IO 에러를 나타내는 메세지가 출력됩니다. 이게 뭘까요?
+
+이전에 말씀드렸는데 add_disk()가 호출되서 커널이 gendisk를 인식한 즉시 해당 디스크에 IO가 발생할 수 있습니다. 우리 드라이버는 add_disk()를 호출한 다음 global_mybrd에 새로 할당된 mybrd_device 객체의 포인터를 저장합니다. 그말은 global_mybrd = mybrd_allod() 코드가 실행되기전에 디스크로 IO가 발생했다는 것입니다. 그리고 mybrd_make_request_fn()에서는 if(mybrd != global_mybrd) 코드로 분기해서 bio_io_error()를 호출합니다. 커널에게 해당 bio를 처리하다가 에러가 발생했다고 알려주는 것입니다. 그러니 커널은 IO가 실패했다고 메세지를 출력하게됩니다.
+
+어쨌든 부팅이 완료됐으니 몇가지 실험을 해보겠습니다.
+
+드라이버가 제대로 등록됐는지를 알아보기 위해 장치 파일을 확인하고, /sys/block/mybrd 디렉토리도 열어보겠습니다.
+```
+/ # ls -l /dev/mybrd
+brw-rw----    1 0        0         253, 111 Nov  3 14:07 /dev/mybrd
+/ # ls /sys/block/mybrd
+alignment_offset   ext_range          range              stat
+bdi                holders            removable          subsystem
+capability         inflight           ro                 trace
+dev                power              size               uevent
+discard_alignment  queue              slaves
+```
+여기서 가장 중요한 파일은 stat파일입니다. 이 장치에 얼마만큼의 IO가 발생했는지를 확인하는 것입니다. size 파일도 있는데요 디스크의 크기가 저장된 파일입니다. cat /sys/block/mybrd/size 명령으로 출력해보세요. 그 외에 다른 파일들도 한번 출력해보세요.
+
+그리고 또 열어볼게 queue 디렉토리입니다. 바로 request-queue의 정보를 가지고 있습니다.
+```
+/ # ls /sys/block/mybrd/queue/
+add_random              logical_block_size      nr_requests
+discard_granularity     max_hw_sectors_kb       optimal_io_size
+discard_max_bytes       max_integrity_segments  physical_block_size
+discard_max_hw_bytes    max_sectors_kb          read_ahead_kb
+discard_zeroes_data     max_segment_size        rotational
+hw_sector_size          max_segments            rq_affinity
+io_poll                 minimum_io_size         scheduler
+iostats                 nomerges                write_same_max_bytes
+/ # cat /sys/block/mybrd/queue/logical_block_size 
+4096
+/ # cat /sys/block/mybrd/queue/max_hw_sectors_kb 
+512
+/ # cat /sys/block/mybrd/queue/max_sectors_kb 
+127
+/ # cat /sys/block/mybrd/queue/max_segment_size 
+65536
+```
+다양한 파일들이 있습니다. 이 파일들의 자세한 정보는 커널 소스 내부에 있는 문서에서 확인할 수 있습니다. 커널 소스에 있는 Documentation 디렉토리가 커널 자체를 설명하는 다양한 문서들이 저장된 디렉토리입니다. 이중에서 Documentation/block 을 보면 블럭 장치에 대한 설명들이 있고, queue에 대한 설명은 queue-sysfs.txt파일에 있습니다. 다음 링크를 열어보면 웹으로도 볼수있습니다.
+
+https://www.kernel.org/doc/Documentation/block/queue-sysfs.txt
+
+예를 들어 logical_block_size파일에 4096이라는 값이 있는데, 우리가 드라이버 코드에서 blk_queue_logical_block_size() 함수로 설정한 값입니다. 이렇게 우리가 직접 설정한 queue에 대한 설정값들과 커널이 디폴트로 설정한 값들이 모여있습니다.
+
+그럼 다음으로는 dd 툴을 이용해서 디스크에 데이터를 써보겠습니다. 다음은 mybrd 장치에 4096바이트씩 두번 0을 쓰는 실험입니다. 
+```
+/ # dd if=/dev/zero of=/dev/mybrd bs=4096 count=2
+[   19.989549] mybrd: start mybrd_make_request: block_device=ffff8800061b0000 mybrd=ffff880006821920
+[   19.990228] mybrd: bio-info: sector=0 end_sector=8 rw=WRITE
+[   19.990630] mybrd: bio-info: end-io=ffffffff8119de20
+[   19.990993] mybrd: segment-info: len=4096 p=ffffea00001db380 offset=0
+[   19.991396] mybrd: end mybrd_make_request
+[   19.991668] mybrd: start mybrd_make_request: block_device=ffff8800061b0000 mybrd=ffff880006821920
+[   19.992190] mybrd: bio-info: sector=8 end_sector=16 rw=WRITE
+[   19.992524] mybrd: bio-info: end-io=ffffffff8119de20
+[   19.992824] mybrd: segment-info: len=4096 p=ffffea00001a2dc0 offset=0
+[   19.993205] mybrd: end mybrd_make_request
+2+0 records in
+2+0 records out
+8192 bytes (8.0KB) copied, 0.003940 seconds, 2.0MB/s
+/ # cat /sys/block/mybrd/stat 
+       0        0        0        0        2        0       16        3        0        0        0
+```
+첫번째 처리하는 bio는 0번째 섹터부터 8개의 섹터를 쓰는 bio입니다. 그리고 bio에 2개의 세그먼트가 존재하는데 각 세그먼트는 4096바이트입니다. 각 세그먼트가 저장된 페이지의 주소도 확인가능합니다. 또 세그먼트의 크기가 4096바이트라는 것은 곧 페이지 전체를 사용한다는 의미이므로 offset은 0입니다.
+
+그리고 반대로 디스크에서 4096바이트씩 2번 읽어들이는 실험도 해봅니다.
+```
+/ # dd if=/dev/mybrd of=/dev/null bs=4096 count=2
+[   81.453448] mybrd: start mybrd_make_request: block_device=ffff8800061b0000 mybrd=ffff880006821920
+[   81.454585] mybrd: bio-info: sector=0 end_sector=32 rw=READ
+[   81.455275] mybrd: bio-info: end-io=ffffffff811a7dd0
+[   81.455928] mybrd: segment-info: len=4096 p=ffffea00001db280 offset=0
+[   81.456681] mybrd: segment-info: len=4096 p=ffffea00001a83c0 offset=0
+[   81.457419] mybrd: segment-info: len=4096 p=ffffea00001db740 offset=0
+[   81.458153] mybrd: segment-info: len=4096 p=ffffea00001d9ac0 offset=0
+[   81.458888] mybrd: end mybrd_make_request
+[   81.459362] mybrd: start mybrd_make_request: block_device=ffff8800061b0000 mybrd=ffff880006821920
+[   81.460390] mybrd: bio-info: sector=32 end_sector=96 rw=READ
+[   81.461043] mybrd: bio-info: end-io=ffffffff811a7dd0
+[   81.461635] mybrd: segment-info: len=4096 p=ffffea00001a8f40 offset=0
+[   81.462360] mybrd: segment-info: len=4096 p=ffffea0000199900 offset=0
+[   81.463091] mybrd: segment-info: len=4096 p=ffffea00001db2c0 offset=0
+[   81.463867] mybrd: segment-info: len=4096 p=ffffea00001db680 offset=0
+[   81.464888] mybrd: segment-info: len=4096 p=ffffea00001a8d00 offset=0
+[   81.465790] mybrd: segment-info: len=4096 p=ffffea00001a8d40 offset=0
+[   81.466629] mybrd: segment-info: len=4096 p=ffffea00001a5e00 offset=0
+[   81.467451] mybrd: segment-info: len=4096 p=ffffea00001a5e40 offset=0
+[   81.468311] mybrd: end mybrd_make_request
+2+0 records in
+2+0 records out
+8192 bytes (8.0KB) copied, 0.015475 seconds, 517.0KB/s
+```
+뭔가 이상합니다. 두개의 bio가 처리되는데 첫번째는 4개의 세그먼트를 가지고 있고 총 32개의 섹터를 읽습니다. 두번째는 세그먼트가 더 많고, 총 64개의 섹터를 읽습니다. 분명 어플에서는 8192바이트를 읽습니다. dd값의 결과 메세지가 분명 8192바이트를 복사했다고 나오는데 커널에서는 더 많은 데이터를 읽습니다.
+
+사실 이건 커널에서 데이터를 미리 읽어놓은 알고리즘이 있기 때문입니다. 디스크의 특성상 플래터를 돌려서 특정한 섹터를 찾는 시간이 오래걸리고, 한번 특정 섹터를 찾으면 데이터를 읽는 시간은 상대적으로 짧습니다. 그러니 한번 섹터를 찾았을 때 좀더 많이 읽어놓으면 다음에 비슷한 위치를 읽었을 때 디스크 IO없이 미리 읽어놓은 데이터를 바로 쓸 수 있습니다. 그리고 많은 연구결과 프로그램들이 특정한 위치의 데이터를 읽고나면 계속 그 다음 위치의 데이터를 읽을 확률이 높다는게 밝혀졌습니다. 이런 프로그램의 특성을 data locality라고 부릅니다. 어쨌든 읽기는 요청한 것보다 좀더 많은 IO가 발생한다는걸 알아두겠습니다. 
+
+그리고 우리가 드라이버 코드에 통계 정보를 업데이트하는 함수를 호출한걸 기억하시나요? 과연 통계 정보가 갱신되고 있는지 stat파일을 출력해보겠습니다. iostat프로그램을 쓰면 자동으로 stat파일을 읽어줍니다.
+```
+/ # cat /sys/block/mybrd/stat 
+       2        0       96       15        2        0       16        3        0        9        9
+/ # iostat
+Linux 4.4.0+ ((none))     11/03/16     _x86_64_    (4 CPU)
+
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+           0.00    0.00    0.04    0.00    0.00   99.95
+
+Device:            tps   Blk_read/s   Blk_wrtn/s   Blk_read   Blk_wrtn
+mybrd             0.01         0.35         0.06         96         16
+```
+https://www.kernel.org/doc/Documentation/block/stat.txt 이 문서를 보면 파일의 각 값들이 뭔지를 알수있습니다.
+
+앞의 4개 숫자는 각각 2개의 IO가 발생했다는것과 0번의 IO 병합이 발생했고, 96개의 섹터가 15ms동안 처리되었다는 것을 말해줍니다. iostat 프로그램도 총 96섹터의 read가 발생했다고 알려줍니다.
+
+뒤의 4개의 숫자는 쓰기에 대한 정보입니다. 총 2번의 IO가 발생했고 16개 섹터가 3ms동안 처리되었다는 것입니다.
+
+더 자세한 설명을 해당 문서를 참고하세요.
+
