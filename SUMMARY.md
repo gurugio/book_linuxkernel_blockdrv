@@ -9,4 +9,5 @@
 * [multiqueue-mode](multiqueue-mode.md)
 * [pagecache_and_blockdriver](pagecacheand_blockdriver.md)
 * [page-flags](page-flags.md)
+* 시스템콜과 블럭 장치 flush
 
