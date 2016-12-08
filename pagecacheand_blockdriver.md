@@ -521,3 +521,155 @@ mpage_alloc으로 생성한 bio 객체를 submit_bio 함수에 전달합니다. 
 iter에는 유저 레벨의 버퍼에 대한 정보가 들어있습니다. page에 있는 데이터를 유저 레벨 버퍼로 복사합니다.
 iov_iter_count에서 iter->count 필드가 0이되면 do_generic_file_read가 종료됩니다.
 
+##페이지캐시에 데이터 쓰기
+block_write_begin함수만 간략하게 분석해보겠습니다.
+
+block_write_begin은 grab_cache_page_write_begin와 __block_write_begin로 이루어져있습니다. grab_cache_page_write_begin은 pagecache_get_page를 호출합니다.
+
+pagecache_get_page는 이전에 find_get_page를 분석할 때 나온 함수입니다. 차이가 있다면 find_get_page에서는 fgp_flags가 0이고, gfp_mask가 0인데, grab_cache_page_write_begin에서는 fgp_flags와 gfp_mask에 값을 전달한다는 것입니다. find_get_page는 페이지캐시에 찾는 페이지가 없으면 NULL을 반환합니다. 하지만 grab_cache_page_write_begin은 pagecache_get_page에서 페이지를 할당해서 페이지캐시에 추가하기 때문에, 페이지 할당 플래그도 필요하고, 페이지를 할당하도록 FGP_CREAT 등의 플래그도 필요합니다.
+
+pagecache_get_page가 하는 일은 간단히보면
+* FGP_LOCK|FGP_ACCESSED|FGP_WRITE|FGP_CREAT 플래그를 받음
+* FGP_LOCK: 페이지캐시에 페이지가 있으면 페이지 잠금
+* FGP_CREATE: 페이지캐시에 페이지가 없으면 페이지 할당
+ * 새로 할당된 페이지이므로 락이 필요없음
+ * PG_referenced 플래그 셋팅
+ * 페이지캐시에 추가하고 lru 리스트에도 추가
+
+이제 페이지캐시에 페이지가 있는 상태에서 __block_write_begin이 호출됩니다.
+* 페이지는 반드시 잠겨있어야합니다.
+* create_page_buffers: 버퍼헤드를 하나 할당받아서 버퍼헤드에 페이지 포인터를 저장합니다. head는 페이지안에 저장된 첫번째 버퍼를 관리하는 버퍼헤드의 주소입니다. 아직 버퍼헤드에는 아무런 정보도 없습니다.
+* blocksize는 블럭의 크기인데 mybrd는 장치파일이므로 페이지 크기가 됩니다.
+* block은 index 값과 같습니다.
+* get_block (블럭 장치의 경우 blkdev_get_block)을 호출해서 버퍼헤드에 디스크 블럭 번호를 씁니다.
+* 페이지나 버퍼해드의 플래그들을 설정합니다. 
+
+페이지 캐시에 데이터를 쓸 준비가 끝났지만, 페이지캐시의 데이터를 장치에 쓰지는 않습니다.
+
+##페이지캐시에 있는 페이지 해지
+###/proc/sys/vm/drop_caches
+
+/proc/ 디렉토리는 커널의 정보와 현재 실행중인 프로세스들의 정보가 있는 곳입니다. 이중에서 유명한게 페이지캐시들을 해지시켜서 가용 메모리를 확보하는 /proc/sys/vm/drop_caches가 있습니다. 이 파일이 어떻게 사용되는지를 알면 언제 어떻게 페이지캐시를 해지하는지를 알 수 있겠지요.
+
+일단 /proc/sys/ 디렉토리를 만드는 코드는 kernel/sysctl.c 에 있는 sysctl_init 함수입니다. 이 함수에서 sysctl_base_table이라는 테이블을 사용하는데 이게 /proc/sys/ 디렉토리 밑에 생성할 디렉토리들의 테이블입니다. 그럼 우리는 vm이라는 디렉토리를 만드는 vm_table을 봐야겠네요.
+
+vm_table이라는 테이블을 보면 /proc/sys/vm/ 디렉토리에 생성할 파일들의 이름과 속성, 그리고 처리 함수의 이름 등이 있습니다. 우리가 봐야할건 drop_caches 항목입니다.
+```
+    {
+		.procname	= "drop_caches",
+		.data		= &sysctl_drop_caches,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= drop_caches_sysctl_handler,
+		.extra1		= &one,
+		.extra2		= &four,
+	},
+```
+참고로 제가 어떻게 sysctl_base_table이라는 테이블이 존재하는지, vm_table이라는게 존재하는지 찾을 수 있었을까요? 이 강좌를 쓰기전에는 사실 어딘가 그런 테이블이 있겠지라고만 생각했었습니다. 당연히 어딘가에 "drop_caches"라는 파일 이름이 소스 파일에 써있을거라고만 생각했습니다. 파일 이름을 동적으로 만들지는 않을거니까요. 이렇게 뭔가 검색할 거리가 있으면 일단 grep으로 찾아보는 거지요. grep으로 검색하면 소스가 아닌 txt 파일이나 기타 임시 파일들도 검색합니다. 그래서 cscope나 global등의 태깅툴에서 소스에서만 검색하는 기능을 써는게 좋을때도 있습니다. 아래는 제가 검색해본 결과입니다.
+```
+$ grep -IR drop_caches *
+Documentation/sysctl/vm.txt:- drop_caches
+Documentation/sysctl/vm.txt:drop_caches
+Documentation/sysctl/vm.txt:    echo 1 > /proc/sys/vm/drop_caches
+Documentation/sysctl/vm.txt:	echo 2 > /proc/sys/vm/drop_caches
+Documentation/sysctl/vm.txt:	echo 3 > /proc/sys/vm/drop_caches
+Documentation/sysctl/vm.txt:`sync' prior to writing to /proc/sys/vm/drop_caches.  This will minimize the
+Documentation/sysctl/vm.txt:	cat (1234): drop_caches: 3
+Documentation/sysctl/vm.txt:with your system.  To disable them, echo 4 (bit 3) into drop_caches.
+Documentation/cgroups/memory.txt:A sync followed by echo 1 > /proc/sys/vm/drop_caches will help get rid of
+Documentation/cgroups/blkio-controller.txt:	echo 3 > /proc/sys/vm/drop_caches
+drivers/gpu/drm/i915/i915_debugfs.c:i915_drop_caches_get(void *data, u64 *val)
+drivers/gpu/drm/i915/i915_debugfs.c:i915_drop_caches_set(void *data, u64 val)
+drivers/gpu/drm/i915/i915_debugfs.c:DEFINE_SIMPLE_ATTRIBUTE(i915_drop_caches_fops,
+drivers/gpu/drm/i915/i915_debugfs.c:			i915_drop_caches_get, i915_drop_caches_set,
+drivers/gpu/drm/i915/i915_debugfs.c:	{"i915_gem_drop_caches", &i915_drop_caches_fops},
+fs/drop_caches.c:int sysctl_drop_caches;
+fs/drop_caches.c:int drop_caches_sysctl_handler(struct ctl_table *table, int write,
+fs/drop_caches.c:    	if (sysctl_drop_caches & 1) {
+fs/drop_caches.c:		if (sysctl_drop_caches & 2) {
+fs/drop_caches.c:			pr_info("%s (%d): drop_caches: %d\n",
+fs/drop_caches.c:				sysctl_drop_caches);
+fs/drop_caches.c:		stfu |= sysctl_drop_caches & 4;
+fs/Makefile:obj-$(CONFIG_SYSCTL)		+= drop_caches.o
+fs/btrfs/inode.c:	 * echo 2 > /proc/sys/vm/drop_caches   # evicts inode
+include/linux/mm.h:extern int sysctl_drop_caches;
+include/linux/mm.h:int drop_caches_sysctl_handler(struct ctl_table *, int,
+kernel/futex.c:	 * prevents drop_caches from setting mapping to NULL beneath us.
+kernel/sysctl.c:		.procname	= "drop_caches",
+kernel/sysctl.c:		.data		= &sysctl_drop_caches,
+kernel/sysctl.c:		.proc_handler	= drop_caches_sysctl_handler,
+kernel/sysctl_binary.c:	{ CTL_INT,	VM_DROP_PAGECACHE,		"drop_caches" },
+System.map:ffffffff811c40c0 T drop_caches_sysctl_handler
+System.map:ffffffff8143cd30 t i915_drop_caches_get
+System.map:ffffffff814437b0 t i915_drop_caches_fops_open
+System.map:ffffffff81443ca0 t i915_drop_caches_set
+System.map:ffffffff81a793a0 r i915_drop_caches_fops
+System.map:ffffffff820fc864 B sysctl_drop_caches
+tools/testing/selftests/vm/run_vmtests:		echo 3 > /proc/sys/vm/drop_caches
+```
+Document/sysctl/ 디렉토리에 관련된 문서가 있다는걸 찾을 수 있습니다. vm.txt를 읽어보면 사용법이나 구현에 대한 설명 등이 있을것 같습니다. 그 외에 drivers 디렉토리에 있는 파일들은 당연히 우리와 상관이 없겠지요. 우리는 커널이 제공하는 기능을 찾는 것이니까요. 그럼 fs/drop_caches.c나 kernel/sysctl.c 파일 등이 남는데요 이 파일들을에 drop_caches이라는 파일을 만드는 코드가 있나 봅니다. 당연히 create("drop_caches")라는 코드는 없을겁니다. 뭔가 파일 이름을 정의하는 데이터구조와 파일을 생성하는 코드가 나눠져있을 것입니다. 커널 개발자들은 작은것 하나라도 나중에 변경될 수 있는 것은 반드시 데이터로 분리합니다. 코드안에 create("drop_caches")라고 데이터를 박아넣지 않습니다. 그런 철학을 생각하면서 찾다보면 여러가지를 배울 수 있습니다.
+
+어쨌든 이제 drop_caches_sysctl_handler이 호출하는 함수를 따라가보면서 페이지캐시와 관련된게 있는지 찾아보면 됩니다. 
+
+Document/sysctl/vm.txt 파일을 보면 drop_caches 파일에 1을 쓰면 페이지캐시를 제거한다고 합니다. 따라서 iterate_supers(drop_pagaecache_sb, NULL) 코드가 우리가 찾는 코드입니다. 뭔가 이름도 페이지캐시와 관련이 있을것 같습니다. 이런식으로 약간은 추리를 하면서 코드를 추적할 필요도 있습니다.
+
+###delete_from_page_cache
+
+drop_caches_sysctl_handler를 분석하는걸 일일이 설명할 필요는 없을것 같습니다. 바로 페이지캐시의 페이지 하나를 해지를 처리하는 delete_from_page_cache를 간단히 보겠습니다.
+
+크게 __delete_from_page_cache와 mapping->a_ops->freepage 두개의 함수 호출로 이루어져있습니다.
+
+__delete_from_page_cache를 간략하게 보면
+* 페이지는 이미 잠겨있는 상태여야합니다.
+* page_cache_tree_delete: radix-tree에서 해당 페이지를 빼내야겠지요.
+* page->mapping = NULL: adress_space 포인터는 이제 필요없으니 지웁니다.
+* __dec_zone_page_state(page, NR_FILE_PAGES): /proc/zoneinfo의 통계 정보에서 페이지캐시의 크기를 줄입니다.
+
+블럭 장치의 address_space_operations는 def_blk_aops 입니다. 확인해보면 freepage는 정의하지 않았네요. 페이지가 잠겨있고 radix-tree에서 빠졌으면, 다른 곳에서 페이지를 사용하지 않는다면 해지해도 됩니다. 따라서 마지막으로 페이지에 대한 참조를 줄이는 page_cache_release를 호출합니다. 참조카운터가 0이되면 자동으로 해지가 되서 버디리스트에 들어가겠네요. page_cache_get을 언제 호출했는지 기억이 나시나요?
+
+###페이지캐시에서 장치로 데이터 쓰기
+
+delete_from_page_cache를 보면 페이지를 해지하기전에 페이지의 데이터를 장치로 보내는 부분이 없습니다. 페이지에 만약 새로운 데이터가 있고, 아직 장치에 쓰기 전이라면 페이지를 해지하기전에 데이터를 flush해야할텐데, 그건 어디에서 할까요?
+
+이전에 mybrd의 mybrd_make_request_fn 함수에 dump_stack을 호출하도록 해서 콜스택을 확인했었습니다. 그때 어플의 데이터가 페이지캐시에 써질때와 페이지캐시에서 드라이버로 써질때가 다르다는걸 확인했었습니다. 또 방금 페이지캐시를 해지할때 페이지의 데이터를 장치에 쓰지 않는다는걸 알았습니다. 그러므로 뭔가 페이지의 데이터를 장치에 쓰는 별도의 루틴이 있다는 것을 알게됩니다. 
+
+정확하게따지면 커널이 블럭 장치의 데이터를 flush하는 몇가지 시점이 있습니다. 그 시점들에 대한 설명은 약간 블럭 장치의 범위를 벋어나므로 블럭 장치의 flush에만 집중하기 위해서 fsync 시스템콜을 간단하게 알아보겠습니다.
+
+약간 커널 소스를 검색하는 요령이 생기신 분들은 fsync로 검색하실 수도 있겠지만 저는 이게 시스템 콜인걸 알고있으므로 먼저 SYSCALL_DEFINE을 검색해보는것도 방법이라고 생각합니다.
+```
+$ grep SYSCALL_DEFINE * -IR | grep sync
+arch/s390/kernel/compat_linux.c:COMPAT_SYSCALL_DEFINE6(s390_sync_file_range, int, fd, u32, offhigh, u32, offlow,
+arch/tile/kernel/compat.c:COMPAT_SYSCALL_DEFINE6(sync_file_range2, int, fd, unsigned int, flags,
+fs/sync.c:SYSCALL_DEFINE0(sync)
+fs/sync.c:SYSCALL_DEFINE1(syncfs, int, fd)
+fs/sync.c:SYSCALL_DEFINE1(fsync, unsigned int, fd)
+fs/sync.c:SYSCALL_DEFINE1(fdatasync, unsigned int, fd)
+fs/sync.c:SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
+fs/sync.c:SYSCALL_DEFINE4(sync_file_range2, int, fd, unsigned int, flags,
+mm/msync.c:SYSCALL_DEFINE3(msync, unsigned long, start, size_t, len, int, flags)
+```
+sync 시스템콜도 있지만 이건 시스템 전체의 데이터를 flush하므로 더 복잡할 것이니 fsync만 생각하겠습니다.
+
+fsync는 바로 do_sync를 호출하네요. 계속 따라가다보면
+```
+vfs_fsync
+vfs_fsync_range
+file->f_ops->fsync = blkdev_fsync
+filemap_write_and_wait_range & blkdev_issue_flush
+```
+
+이런 순서로 함수들이 나타납니다.
+
+사실 filemap_write_and_wait_range는 이전에 콜스택을 확인할 때 나왔던 함수입니다. 그리고 blkdev_issue_flush는 아무런 정보도 없는 dummy bio를 만들고, request-queue를 비우는 WRITE_FLUSH 명령을 request-queue로 전달하는 매우 간단한 함수입니다. 그러니 filemap_write_and_wait_range가 페이지캐시와 관련이 있겠네요.
+
+커널의 콜스택은 이미 이전에 확인했으니 가장 핵심적인 함수 __block_write_full_page만 간략하게 보겠습니다.
+
+####__block_write_full_page
+
+함수가 시작되면 우선 create_page_buffers 함수로 해당 페이지의 버퍼헤드를 찾습니다. 페이지하나에 여러개의 블럭이 있다면 버퍼헤드도 여러개이겠지만, 장치 파일의 페이지에는 하나의 버퍼헤드만 있을 것입니다.
+
+어쨌든 버퍼헤드를 확인하고 버퍼헤드에 락을 거는 등의 사전 작업을 한 후 submit_bh_wbc를 호출합니다. submit_bh_wbc에서 bio를 할당하고 bio의 필드를 셋팅하고 submit_bio를 호출하는 익숙한 코드를 실행합니다.
+
+struct writeback_control 타입의 wbc라는 객체가 있는데 이 객체는 페이지 캐시를 얼마나 완료했는지를 관리하는 객체입니다. 상황에 따라 특정 파일에 속한 페이지 캐시를 모두 없애야할 때도 있고, 약간의 페이지 캐시만 없애야할 때도 있습니다.
+
+만약 동적으로 마운트된 장치가 umount될때라면 해당 블럭 장치의 페이지 캐시를 모두 없애야할 것입니다. 하지만 시스템에 가용 메모리가 부족한 상황일때, 모든 페이지 캐시를 없앤다면 순간적으로 시스템이 정지된것처럼 보일 수도 있고, 시스템의 성능이 순간적으로 낮아질 수 있습니다. 따라서 최대한 페이지 캐시를 유지하면서 약간의 페이지 캐시만을 없애서 필요한 메모리만 할당될 수 있도록 균형을 맞춰야합니다. 그럴때 얼마의 메모리를 확보해야하는지 등등의 정보를 전달하는게 wbc 객체입니다. fsync이외에도 메모리 할당이 실패하는 등 페이지캐시가 해지되는 경우는 많습니다만 결국엔 같은 함수로 처리될 것이고 wbc 객체의 정보만 달라질 것입니다.
