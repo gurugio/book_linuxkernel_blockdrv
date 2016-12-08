@@ -1,2 +1,523 @@
 # pagecache_and_blockdriver
 
+운영체제나 커널을 조금만 공부해보셨다면 드라이버 실험을 하면서 약간은 개운하지 못한 느낌적인 느낌이 있으실겁니다. 바로 페이지 캐시때문이지요. 사실 어플에서 명령한 모든 IO는 바로 드라이버로 전달되는게 아니고, 페이지 캐시 레이어가 중간에서 버퍼 역할을 합니다.
+
+어플에서 실제 물리적인 장치까지 어떤 레이어들이 있나 보면 이렇습니다.
+
+어플 -> (커널레벨진입) -> 파일시스템 -> 페이지캐시 -> 블럭레이어 -> 드라이버 -> 물리장치
+
+아주 간략하게본 것이지만 어쨌든 드라이버를 공부해봤으니, 이제 한단계 업그레이드를 해서 페이지 캐시와 블럭레이어도 간단하게 분석해보겠습니다.
+
+## 페이지캐시 실험
+페이지캐시가 뭔지 알아보기 위해 약간의 실험을 해보겠습니다. 
+
+우선 mybrd를 실험했던 커널을 다시 부팅합니다. 당연히 mybrd 드라이버도 포함되겠지요. 부팅하자마자 첫번째로 실행할 명령은 free -k 와 cat /proc/zoneinfo | grep file_pages 입니다.
+```
+/ # cat /proc/zoneinfo | grep file_pages
+    nr_file_pages 0
+    nr_file_pages 966
+/ # free -k
+             total       used       free     shared    buffers     cached
+Mem:        114160      21408      92752       3864          0       3864
+-/+ buffers/cache:      17544      96616
+Swap:            0          0          0
+
+```
+
+free 명령은
+
+* total: 총 메모리
+* used: 사용중인 메모리
+* free: 남은 메모리
+* shared: 공유 메모리
+* buffers: 파일시스템 자체를 관리하는 메타데이터
+* cached: 파일의 내용을 메모리에 캐시하는 페이지캐시
+
+free 명령에서 buffers와 cached의 차이가 뭔지 저도 많이 헷갈렸었는데 검색해도 설명들이 애매했었습니다. 그런데 레드햇 사이트에 설명이 잘 되있네요.
+
+http://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Tuning_and_Optimizing_Red_Hat_Enterprise_Linux_for_Oracle_9i_and_10g_Databases/chap-Oracle_9i_and_10g_Tuning_Guide-Memory_Usage_and_Page_Cache.html
+
+우리는 페이지캐시에 관심이있으니 cached 값만 보도록 하겠습니다. 현재 cached 페이지의 크기가 3864k 입니다. -k 옵션은 kilobyte로 출력하라는 옵션입니다. -m을하면 megabyte로 나오겠지요.
+
+/proc/zoneinfo는 각 zone에서 얼마만큼의 메모리에 어디에 사용되고 있는지를 보여주는 것입니다. 여기에서 페이지캐시는 nr_file_pages 항목에 해당됩니다. 나중에 커널 코드를 볼때 nr_file_pages 항목을 업데이터하는 코드가 나올 것입니다.
+
+이상태에서 mybrd에서 파일로 데이터를 옮겨보겠습니다. 드라이버에서 파일로 데이터를 옮기는 것이므로 어플 입장에서는 읽기에 해당합니다.
+```
+/ # dd if=/dev/mybrd of=./big
+[  120.253239] mybrd: start mybrd_make_request_fn: block_device=ffff880006194340 mybrd=ffff8800065ab240
+[  120.253945] CPU: 1 PID: 1053 Comm: dd Not tainted 4.4.0+ #76
+[  120.254408] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS Ubuntu-1.8.2-1ubuntu1 04/01/2014
+
+
+------------------- 생략
+
+4194304 bytes (4.0MB) copied, 1.999599 seconds, 2.0MB/s
+/ # 
+/ # cat /proc/zoneinfo | grep file_pages
+    nr_file_pages 140
+    nr_file_pages 1850
+/ # free -k
+             total       used       free     shared    buffers     cached
+Mem:        114160      25572      88588       7960          0       7960
+-/+ buffers/cache:      17612      96548
+Swap:            0          0          0
+```
+dd 명령을 실행하면 mybrd 디스크의 크기가 4MB이므로 총 4.0MB의 복사가 발생합니다. free 명령을 실행해보면 cached의 값이 4096K 증가된걸 볼 수 있습니다. 정말 정확하게 4MB의 데이터가 디스크에서 메모리로 복사된 것입니다. 바로 이렇게 장치의 데이터를 메모리로 복사해놓는게 페이지캐시입니다. 사실 파일을 만든다는 것은 그 파일이 저장되어있는 디스크에 공간을 할당하고, 디스크에 데이터를 저장한다는 것입니다. 그런데 파일을 만들때마다 디스크에 IO가 발생한다면 디스크의 성능이 곧 컴퓨터의 성능이 될 수 있습니다. 하지만 이렇게 메모리에 보관해놓는다면 디스크보다 메모리가 더 빠르니 컴퓨터 전체의 성능이 더 빨라지겠지요. 메모리에 있는 데이터는 나중에 컴퓨터가 한가할때 디스크에 쓰면, 사용자는 알아차리지도 못할 것입니다.
+
+zoneinfo 파일에서 nr_file_pages 항목을 볼까요. 2개의 zone이 있으므로 2개의 값이 나타났는데 어쨌든 총 증가된걸 따지면 1024가 됩니다. 이건 페이지의 갯수이므로 곧 4MB라는 의미입니다.
+
+이번에는 파일을 파일로 복사해보겠습니다.
+```
+/ # dd if=./big of=./big2
+
+8192+0 records in
+8192+0 records out
+4194304 bytes (4.0MB) copied, 0.003766 seconds, 1.0GB/s
+/ # cat /proc/zoneinfo | grep file_pages
+    nr_file_pages 294
+    nr_file_pages 2720
+/ # free -k
+             total       used       free     shared    buffers     cached
+Mem:        114160      29512      84648      12056          0      12056
+-/+ buffers/cache:      17456      96704
+Swap:            0          0          0
+```
+
+새로 4MB의 파일이 생성되었습니다. 마찬가지로 페이지캐시가 4MB 늘어났습니다.
+그럼 파일에서 mybrd 장치로 데이터를 써볼까요.
+```
+/ # dd if=./big of=/dev/mybrd/ 
+
+/ # free -k
+             total       used       free     shared    buffers     cached
+Mem:        114160      33788      80372      12056          0      12056
+-/+ buffers/cache:      21732      92428
+Swap:            0          0          0
+```
+파일의 데이터는 이미 메모리에 있는 데이터입니다. 따라서 파일 데이터를 장치에 써봐야 페이지캐시의 크기는 늘어나지 않습니다.
+
+그런데 used의 값이 증가했습니다. 왜냐면 mybrd 드라이버가 데이터를 저장하기위해 페이지 할당을 했기 때문입니다. 4276KB가 증가했네요. 데이터를 보관하기위한 페이지뿐 아니라, 그 페이지를 관리하기위한 메타데이터도 증가했기 때문입니다. radix-tree에 페이지가 추가되면 트리 노드도 만들어져야하니까요.
+
+그럼 장치 드라이버가 쓴 메모리는 왜 used가 되고 파일에 쓴 메모리는 cached가 될까요.
+
+파일에 쓴 메모리는 나중에 시스템에 메모리가 부족해지면 메모리의 데이터를 디스크에 저장하고, free 메모리로 쓸 수 있습니다. 그래서 cached로 구분하는 것입니다. free 명령의 두번째 라인에 -/+ buffers/cache 값을 보면 used와 free에서 버퍼/캐시를 뺀 값을 보여줍니다. 메모리가 부족해지면 페이지캐시를 제거할 수 있으므로 최대 92428KB의 메모리를 확보할 수 있다는걸 보여주는 것입니다.
+
+드라이버가 할당한 메모리는 드라이버가 스스로 반납하지않는한 계속 사용중인 메모리입니다. 드라이버가 시스템 전체의 메모리가 부족한지 알 방법도 없고 알 이유도 없습니다. 드라이버는 자기 동작만 확실하게 하면 되기때문에 드라이버가 할당한 메모리를 회수할 방법이 없습니다. (있긴 있습니다만 예외적인 것이니까요.) 그래서 used로 구분합니다.
+
+참고로 커널이 할당하는 페이지는 페이지 속성중에 unmovable 속성을 가집니다. compaction을 해서 연속된 메모리를 확보할때 페이지 데이터를 옮기는데 함부로 옮길 수 없기 때문입니다. 드라이버가 어떤 데이터의 물리 주소를 사용하고 있는데, 커널이 이 데이터를 옮겨버리면 물리 주소가 바껴버리고, 드라이버는 바뀌기전의 물리 주소를 참조하게 되니 엉뚱한 메모리에 접근하게되니까요.
+
+어플에게 할당된 페이지는 movable입니다. 어플은 가상 주소를 사용하므로 페이지의 데이터를 옮기더라도 어플의 페이지 테이블의 물리 주소만 바꿔주면 어플은 계속 같은 가상 주소로 바뀐 메모리를 접근할 수 있으니까, 페이지가 옮겨질 수 있습니다.
+
+현재 시스템의 페이지들이 얼마나 movable이냐 unmovable이냐 등은 /proc/pagetypeinfo로 확인할 수 있습니다. 위에서 실험한 내용을 다시 해보면서 /proc/zoneinfo뿐 아니라 /proc/pagetypeinfo의 내용도 어떻게 변하는지 확인해보세요.
+```
+/ # cat /proc/pagetypeinfo 
+Page block order: 9
+Pages per block:  512
+
+Free pages count per migrate type at order       0      1      2      3      4      5      6      7      8      9     10 
+Node    0, zone      DMA, type    Unmovable     11      4      5      2      1      1      1      1      1      1      0 
+Node    0, zone      DMA, type      Movable      0      2      3      2      3      3      3      1      0      0      1 
+Node    0, zone      DMA, type  Reclaimable      5      1      7      3      1      0      0      1      1      1      0 
+Node    0, zone      DMA, type   HighAtomic      0      0      0      0      0      0      0      0      0      0      0 
+Node    0, zone    DMA32, type    Unmovable      1      2     11      6      6      2      2      2      2      1      0 
+Node    0, zone    DMA32, type      Movable     12     11      7      5      7      5     10      4      2      2     13 
+Node    0, zone    DMA32, type  Reclaimable      8      5     20     15      2      1      0      0      0      1      0 
+Node    0, zone    DMA32, type   HighAtomic      0      0      0      0      0      0      0      0      0      0      0 
+
+Number of blocks type     Unmovable      Movable  Reclaimable   HighAtomic 
+Node 0, zone      DMA            3            3            2            0 
+Node 0, zone    DMA32           10           42            4            0 
+```
+##패이지 캐시 관리를 위한 데이터 구조 struct address_space
+페이지캐시를 관리하는 데이터 구조체는 struct address_space입니다. 이 구조체의 객체는 가장 먼저 inode의 i_mapping 필드에 저장됩니다. inode는 파일시스템에서 생성하겠지요. 우리가만든 mybrd 드라이버는 디스크를 등록하면 장치 파일이 생성됩니다. 이때 파일이 생성된다는 것은 곧 inode도 생성된다는 것입니다. 디스크를 등록하는 add_disk 함수의 어딘가에 inode를 생성하는 코드가 숨어있습니다. 그리고 디스크의 장치 파일의 inode->i_mapping 필드는 모두 def_blk_aops가 저장됩니다.
+
+파일이 열릴때 open 시스템 콜에서 inode의 address_space 객체가 file의 f_mapping 필드에 inode의 i_mapping값을 저장합니다. 그리고나면 read/write 등 모든 시스템 콜에서 사용하는 file 객체에 address_space 객체가 사용되는 것이지요. inode는 파일이 열릴때만 참조되고, 그 이후로는 항상 file 객체만 사용됩니다. 그래서 같은 파일을 여러번 열 수 있고, 공유할 수 있는 것입니다.
+
+struct address_space에서 가장 중요한 필드는 struct address_space_operations 입니다.
+
+fs/block_dev.c 파일을 열어보면 아래와같이 file_operations 타입의 객체와 address_space_operations 타입의 객체가 정의되어있습니다.
+```
+const struct file_operations def_blk_fops = {
+    .open		= blkdev_open,
+	.release	= blkdev_close,
+	.llseek		= block_llseek,
+	.read_iter	= blkdev_read_iter,
+	.write_iter	= blkdev_write_iter,
+	.mmap		= blkdev_mmap,
+	.fsync		= blkdev_fsync,
+	.unlocked_ioctl	= block_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= compat_blkdev_ioctl,
+#endif
+	.splice_read	= generic_file_splice_read,
+	.splice_write	= iter_file_splice_write,
+};
+static const struct address_space_operations def_blk_aops = {
+    .readpage	= blkdev_readpage,
+	.readpages	= blkdev_readpages,
+	.writepage	= blkdev_writepage,
+	.write_begin	= blkdev_write_begin,
+	.write_end	= blkdev_write_end,
+	.writepages	= generic_writepages,
+	.releasepage	= blkdev_releasepage,
+	.direct_IO	= blkdev_direct_IO,
+	.is_dirty_writeback = buffer_check_dirty_writeback,
+};
+```
+
+open 시스템콜은 방금 말한대로 단지 file 구조체의 객체만 생성합니다. file의 객체의 f_op 필드에는 def_blk_fops의 포인터가 저장되고, file->f_mapping->a_ops 필드에 def_blk_aops의 포인터가 저장되는 것입니다. 그 다음에 read/write 등 실제 데이터를 처리하는 시스템콜이 호출되면 먼저 file_operaions에서 해당 콜백 함수가 호출되고, 그 콜백 함수에서 다시 address_space_operations의 콜백 함수가 호출되는 것입니다.
+
+예를 들면 read 시스템콜은 vfs_read 함수등을 거쳐서 def_blk_fops.read_iter 를 호출합니다. 그러면 blkdev_read_iter가 호출될거고, blkdev_read_iter는 어느순간에 file->f_mapping->a_ops->readpages를 호출합니다. 그러면 blkdev_readpages가 호출되고, blkdev_readpages는 디스크에 접근합니다.
+
+address_space 객체의 host 필드에 inode의 포인터가 있고, inode에는 해당 파일이 블럭 장치 파일일 경우 struct block_device 에 대한 포인터를 저장하고 있으므로 결국 address_space 객체만 있으면 현재 페이지캐시가 어떤 블럭 장치의 데이터를 저장하고 있는지를 알 수 있습니다. 따라서 IO를 실행하기 위해 드라이버로 전달할 bio 객체를 만들 때도 mybrd가 생성한 request-queue에 bio를 전달할 수 있는 것이지요.
+
+###struct page의 mapping 과 index 필드
+
+struct page의 mapping과 index 필드도 페이지 캐시를 위해 사용됩니다. mapping 필드는 address_space의 포인터가 저장됩니다. index 필드는 파일에서 현재 페이지의 offset를 저장합니다. index필드는 mybrd에서 만든 것과 동일하게 사용되는 것입니다. brd.c 패치 히스토리를 읽다보면 페이지캐시의 데이터 저장 방식을 따라서 만들었는데, Linus Torvalds의 아이디어였다라는 기록이 있습니다.
+
+아직은 감이 안오실건데 코드를 보다보면 순서가 들어오실 겁니다.
+
+문서를 단순화하기위해 버퍼헤드에 대한 내용은 생략하겠습니다. 블럭 장치의 블럭 크기는 페이지 크기와 같으므로 버퍼헤드가 별다른 역할을 하지 않기 때문입니다. 블럭 장치의 페이지캐시가 눈에 익어지면 좀더 복잡한 일반 파일의 페이지캐시도 좀더 쉽게 접근이 될것같습니다.
+
+##커널 콜스택 확인
+어플에서 시스템 콜을 호출하면 커널 레벨로 진입하고, 커널 레벨로 진입한 이후의 함수 호출들은 dump_stack() 함수를 써서 확인할 수 있습니다. 드라이버를 만들때도 써봤지요.
+
+mybrd_make_request_fn()함수에 dump_stack()을 넣고 실행해보겠습니다. queue_mode값을 MYBRD_Q_BIO로 바꾸면 콜스택을 조금 줄일 수 있습니다.
+```
+diff --git a/mybrd.c b/mybrd.c
+index 11fb9af..cf8b717 100644
+--- a/mybrd.c
++++ b/mybrd.c
+@@ -62,7 +62,7 @@ struct mybrd_device {
+ };
+ 
+ 
+-static int queue_mode = MYBRD_Q_MQ;
++static int queue_mode = MYBRD_Q_BIO;
+ static int mybrd_major;
+ struct mybrd_device *global_mybrd;
+ #define MYBRD_SIZE_4M 4*1024*1024
+@@ -295,7 +295,7 @@ static blk_qc_t mybrd_make_request_fn(struct request_queue *q, struct bio *bio)
+        pr_warn("start mybrd_make_request_fn: block_device=%p mybrd=%p\n",
+                bdev, mybrd);
+ 
+-       //dump_stack();
++       dump_stack();
+        
+        // print info of bio
+        sector = bio->bi_iter.bi_sector;
+```
+이제 커널을 부팅하고 dd 명령을 이용해서 읽기쓰기를 해보면 콜스택이 출력됩니다.
+
+다음은 제가 쓰기를 했을 때 제 환경에서 출력된 콜스택입니다.
+```
+[  194.612304] Call Trace:
+[  194.612474]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
+[  194.612833]  [<ffffffff814fac32>] mybrd_make_request_fn+0x42/0x260
+[  194.613306]  [<ffffffff812efc8e>] generic_make_request+0xce/0x1a0
+[  194.613761]  [<ffffffff812efdc2>] submit_bio+0x62/0x140
+[  194.614158]  [<ffffffff8119fa78>] submit_bh_wbc.isra.38+0xf8/0x130
+[  194.614571]  [<ffffffff811a188d>] __block_write_full_page.constprop.43+0x10d/0x3a0
+[  194.615098]  [<ffffffff810ac8d5>] ? add_timer_on+0xd5/0x130
+[  194.615523]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
+[  194.615858]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
+[  194.616238]  [<ffffffff811a1c60>] block_write_full_page+0x140/0x160
+[  194.616654]  [<ffffffff811a2853>] blkdev_writepage+0x13/0x20
+[  194.617107]  [<ffffffff8112344e>] __writepage+0xe/0x30
+[  194.617518]  [<ffffffff81123e67>] write_cache_pages+0x1d7/0x4c0
+[  194.617942]  [<ffffffff81194a30>] ? __mark_inode_dirty+0x2c0/0x310
+[  194.618412]  [<ffffffff81123440>] ? domain_dirty_limits+0x120/0x120
+[  194.618798]  [<ffffffff8111a4ee>] ? unlock_page+0x5e/0x60
+[  194.619222]  [<ffffffff8112418c>] generic_writepages+0x3c/0x60
+[  194.619616]  [<ffffffff81125ed9>] do_writepages+0x19/0x30
+[  194.619972]  [<ffffffff8111b2ec>] __filemap_fdatawrite_range+0x6c/0x90
+[  194.620456]  [<ffffffff8111b357>] filemap_write_and_wait+0x27/0x70
+[  194.620923]  [<ffffffff811a29e9>] __blkdev_put+0x69/0x220
+[  194.621325]  [<ffffffff811a3156>] ? blkdev_write_iter+0xd6/0x100
+[  194.621723]  [<ffffffff811a2f97>] blkdev_put+0x47/0x100
+[  194.622102]  [<ffffffff811a3070>] blkdev_close+0x20/0x30
+[  194.622502]  [<ffffffff8116f7e7>] __fput+0xd7/0x1e0
+[  194.622851]  [<ffffffff8116f929>] ____fput+0x9/0x10
+[  194.623227]  [<ffffffff810702ae>] task_work_run+0x6e/0x90
+[  194.623585]  [<ffffffff810021a2>] exit_to_usermode_loop+0x92/0xa0
+[  194.624041]  [<ffffffff81002b2e>] syscall_return_slowpath+0x4e/0x60
+[  194.624567]  [<ffffffff8188f30c>] int_ret_from_sys_call+0x25/0x8f
+```
+
+다음은 읽기를 했을 때 콜스택입니다.
+```
+[  143.111883]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
+[  143.113572]  [<ffffffff814fac32>] mybrd_make_request_fn+0x42/0x260
+[  143.115554]  [<ffffffff811654cf>] ? kmem_cache_alloc+0x2f/0x130
+[  143.117391]  [<ffffffff812efc8e>] generic_make_request+0xce/0x1a0
+[  143.118880]  [<ffffffff812efdc2>] submit_bio+0x62/0x140
+[  143.120195]  [<ffffffff81127f49>] ? lru_cache_add+0x9/0x10
+[  143.121662]  [<ffffffff811a8e85>] mpage_readpages+0x135/0x150
+[  143.123364]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
+[  143.124759]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
+[  143.126213]  [<ffffffff8115f497>] ? alloc_pages_current+0x87/0x110
+[  143.128042]  [<ffffffff811a2818>] blkdev_readpages+0x18/0x20
+[  143.129704]  [<ffffffff81126493>] __do_page_cache_readahead+0x163/0x1f0
+[  143.131482]  [<ffffffff811265eb>] ondemand_readahead+0xcb/0x250
+[  143.132949]  [<ffffffff81126959>] page_cache_sync_readahead+0x29/0x40
+[  143.134541]  [<ffffffff8111b89a>] generic_file_read_iter+0x46a/0x570
+[  143.136190]  [<ffffffff811a31b0>] blkdev_read_iter+0x30/0x40
+[  143.137665]  [<ffffffff8116d7d2>] __vfs_read+0xa2/0xd0
+[  143.139124]  [<ffffffff8116dfe1>] vfs_read+0x81/0x130
+[  143.140442]  [<ffffffff8116ec61>] SyS_read+0x41/0xa0
+[  143.141714]  [<ffffffff8188f1ae>] entry_SYSCALL_64_fastpath+0x12/0x71
+```
+
+커널 소스를 따라가면서 한번 콜스택대로 함수가 호출되는지 확인해보세요. 중간중간에 static으로 선언된 함수들은 콜스택에 나타나지 않는다는 것도 알 수 있고, 어떻게 호출되는지 알 수 없는 콜백함수들도 있습니다.
+
+예를들어 blkdev_read_iter함수는 ```__vfs_read()``` 함수에 직접적으로 호출되는게 아닙니다. ```__vfs_read()```함수를 보면
+```
+ssize_t __vfs_read(struct file *file, char __user *buf, size_t count,
+    	   loff_t *pos)
+{
+	if (file->f_op->read)
+		return file->f_op->read(file, buf, count, pos);
+	else if (file->f_op->read_iter)
+		return new_sync_read(file, buf, count, pos);
+	else
+		return -EINVAL;
+}
+EXPORT_SYMBOL(__vfs_read);
+```
+file 구조체에서 f_op값을 읽는데 file 구조체에 뭐가 들어있는지 그냥 봐서는 알 수가 없습니다.
+
+커널은 인터페이스 디자인을 매우 신경써서 구현합니다. 왜냐면 파일시스템 개발자와 페이지 캐시 개발자가 다르고, 페이지 캐시 개발자와 블럭 레이어 개발자가 다르기 때문입니다. 그냥 다른게 아니라 나라도 다르고, 일하는 시간대도 다르고, 소속도 다르고, 같은건 커널을 개발한다는 것 뿐인 개발자들이 함께 개발하는 코드이므로 모듈화를 잘해야하고 인터페이스 정의도 매우 깐깐하게 합니다. 그래야 서로 다른 레이어/모듈간에 독립적으로 개발될 수 있겠지요. 만약 이쪽에서 개발한걸 다른쪽에서 그대로 써야한다면 수많은 개발자들이 서로의 결과물을 기다리다가 데드락이 걸릴 것입니다.
+
+그래서 커널 소스를 보면 수많은 콜백함수들을 보게됩니다. 그럴때마다 코드를 처음 분석하는 입장에서는 막막할 때가 많습니다. 제가 주로 쓰는 방법은 구조체 이름으로 검색해보는 것입니다. struct file_operations타입의 객체를 어디선가 정적으로 정의하고 있기때문에 file 구조체에서 가져다쓰고있는 것이겠지요. 그러니 일단 커널 소스 전체에서 struct file_operations를 한번 검색해보는 것입니다. 그럼 분명 어디선가 struct file_operations를 정의하고있고, 정의된 객체를 file 구조체에 등록하는 함수가 있을 것입니다. 한번 찾아보겠습니다.
+```
+~/work/linux-torvalds $ /bin/grep file_operations * -R | wc
+   3195   20545  264089
+```
+이번에는 운이 안좋았습니다. 너무 많네요. 3195개의 file_operations 정의가 있습니다. cscope등으로 검색해봐도 너무 많습니다. 이럴때는 별수없이 다른 책이나 구글 등을 통해서 파악할 수밖에 없습니다.
+
+다행히 file_operations 구조체는 많이 쓰이는 것만큼 설명 자료가 많습니다. 우리는 블럭 장치를 분석하고 있으므로 블럭 장치만 생각한다면 결국은 struct def_blk_fops가 우리가 찾는 객체입니다. 자세한 설명은 Understanding the linux kernel 책을 참고하세요. 너무나 오랫동안 많이 사용되는 구조체이므로 자세한 설명이 있습니다.
+
+어쨌든 지금은 def_blk_fop가 file->f_ops에 저장되어있다는 것만 생각하고 넘어가겠습니다. 그러면 결국은 다음과 같은 콜스택을 얻을 수 있게 됩니다.
+```
+READ: Sys_read
+--> __vfs_read
+(--> new_sync_read)
+--> def_blk_fops.read_iter = blkdev_read_iter
+--> generic_file_read_iter
+(--> do_generic_file_read)
+--> (find_get_page &)page_cache_sync_readahead
+--> ondemand_readahead
+--> __do_page_cache_readahead
+--> read_pages
+--> mapping->a_ops->readpages = blkdev_readpages
+--> mpage_readpages
+--> submit_bio
+--> generic_make_request
+--> mybrd_make_request_fn
+WRITE: int_ret_from_sys_call
+--> syscall_return_slowpath
+--> exit_to_usermode_loop
+--> task_work_run
+--> __fput
+--> blkdev_close
+--> blkdev_put
+--> __blkdev_put
+--> filemape_write_and_wait
+--> __filemap_fdatawrite_range
+--> do_writepages
+--> generic_writepages
+--> write_cache_pages
+--> __writepage
+--> mapping->a_ops->writepage = blkdev_writepage
+--> block_write_full_page
+--> submit_bh_wbc
+--> submit_bio
+--> generic_make_request
+--> mybrd_make_request_fn
+```
+그런데 쓰기에서 콜스택이 이상한게 보입니다. Sys_write같이 뭔가 시스템콜같은 함수 이름이 나타나야하는데 뜬금없이 시스템 콜이 끝나는것 같은 int_ret_from_sys_call이라는 함수가 호출됩니다.
+
+여기서 또 커널을 분석할 때 자주 막히는 지점이 나타납니다. 어떤 처리가 synchronouse하게 되면 그냥 함수들의 호출 관계가 바로 나타납니다. 데이터를 읽는 것은 어플에게 당장 데이터를 줘야하므로 처리를 지연시킬 수 없습니다. 바로 그 순간에 데이터를 읽어와야합니다. 그게 메모리에있는 버퍼에서 읽어오던, 장치를 읽어서 읽어오던 데이터를 가져와야합니다. 그런데 쓰기는 다릅니다. 어플은 그냥 쓰기만하면 되고, 커널은 이 데이터를 언제 최종 블럭 장치에 써야할지 결정할 수 있습니다. 데이터를 잃어버리지만 않는다면 당장 블럭 장치에 접근할 필요가 없어집니다. 따라서 이 데이터가 언제 블럭 장치에 들어갈지는 분석하기가 어려워집니다.
+
+비동기 데이터 처리를 설명하자면 제 지식도 한계가 있으므로 지금은 일단 write의 시스템 콜부터 페이지 캐시까지의 콜스택만 따로 뽑아보겠습니다. 이때는 mybrd 드라이버가 호출되는게 아니므로 mybrd 드라이버를 아무리 돌려봐야 알 수가 없습니다. 그냥 read의 콜스택을 보고 코드를 따라가보는게 빠릅니다. blkdev_read_iter라는 함수가 있으면 당연히 blkdev_write_iter라는 함수도 있을거라는 계산을 가지고 코드를 따라가보면 대강 다음과 같은 콜스택을 얻을 수 있습니다.
+```
+__vfs_write
+--> new_sync_write
+--> blkdev_write_iter
+--> generic_perform_write 
+--> a_ops->write_begin(&write_end) 
+--> blkdev_write_begin(&blkdev_write_end) 
+--> block_write_begin
+```
+읽기에서 얻은 콜스택과 완전히 대칭되는 함수들이 있어서 별로 어렵지 않게 찾을 수 있었습니다.
+
+그리고 콜 스택 중간에 알수없는 a_ops 객체가 나타납니다. 이것은 일단 block_dev.c 파일에 있는 def_blk_aops 구조체라고 생각하고 넘기겠습니다. 뒤에 페이지 캐시를 제대로 분석할 때 제대로 소개하겠습니다.
+
+## ext2에서의 콜스택
+
+파일시스템과 페이지캐시의 관계를 아주아주 간단하게 한번 추적해보겠습니다. 제일 단순한 ext2 파일시스템의 경우만 보겠습니다.
+
+ext2의 file_operations를 한번 볼까요.
+```
+~/work/linux-torvalds $ /bin/grep file_operations fs/ext2/* -R
+fs/ext2/dir.c:const struct file_operations ext2_dir_operations = {
+fs/ext2/ext2.h:extern const struct file_operations ext2_dir_operations;
+fs/ext2/ext2.h:extern const struct file_operations ext2_file_operations;
+fs/ext2/file.c:const struct file_operations ext2_file_operations = {
+fs/ext2/inode.c:    		inode->i_fop = &ext2_file_operations;
+fs/ext2/inode.c:			inode->i_fop = &ext2_file_operations;
+fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
+fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
+fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
+fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
+```
+소스를 뒤져보니 바로 file.c라는 파일에 정의되어있다는걸 알 수 있습니다.
+```
+const struct file_operations ext2_file_operations = {
+    .llseek		= generic_file_llseek,
+	.read_iter	= generic_file_read_iter,
+	.write_iter	= generic_file_write_iter,
+	.unlocked_ioctl = ext2_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= ext2_compat_ioctl,
+#endif
+	.mmap		= ext2_file_mmap,
+	.open		= dquot_file_open,
+	.release	= ext2_release_file,
+	.fsync		= ext2_fsync,
+	.splice_read	= generic_file_splice_read,
+	.splice_write	= iter_file_splice_write,
+};
+```
+시스템콜에서 read_iter와 write_iter를 호출할 것이니, generic_file_read_iter와 generic_file_write_iter부터 코드를 따라가보면 되겠네요.
+```
+generic_file_read_iter
+-->do_generic_file_read
+--> find_get_page
+--> pagecache_get_page*
+
+generic_file_write_iter
+--> generic_perform_write 
+--> a_ops->write_begin = ext2_write_begin 
+--> block_write_begin 
+--> grab_cache_page_write_begin 
+--> pagecache_get_page*
+```
+참고로 a_ops는 inode.c 파일에 정의되어있습니다.
+```
+const struct address_space_operations ext2_aops = {
+    .readpage		= ext2_readpage,
+	.readpages		= ext2_readpages,
+	.writepage		= ext2_writepage,
+	.write_begin		= ext2_write_begin,
+	.write_end		= ext2_write_end,
+	.bmap			= ext2_bmap,
+	.direct_IO		= ext2_direct_IO,
+	.writepages		= ext2_writepages,
+	.migratepage		= buffer_migrate_page,
+	.is_partially_uptodate	= block_is_partially_uptodate,
+	.error_remove_page	= generic_error_remove_page,
+};
+```
+mybrd의 콜스택을 분석해본 결과와 중복되는 콜스택이 나타납니다.
+
+읽기의 경우에는 do_generic_file_read부터, 쓰기에는 block_write_begin부터가 중복됩니다. 따라서 우리는 이 함수들부터 코드를 읽어보겠습니다.
+
+##장치에서 페이지캐시로 데이터 읽어오기
+데이터를 읽을 때 콜스택을 보면 mybrd블럭 장치를 직접 읽을 경우와 파일시스템에 존재하는 파일을 읽을 경우 모두 do_generic_file_read을 호출하는걸 알 수 있습니다. 이 함수를 간단하게 분석해보면 페이지캐시가 어떻게 동작하는지, 언제 페이지캐시에서 블럭 장치를 읽어서 페이지캐시를 추가하는지 등을 알아보겠습니다.
+
+리눅스 소스를 보시면서 글을 읽으시길 바랍니다. 소스를 하나하나 복사하는건 의미가 없으니까요. 나중에 4.10이 되든, 5.0이 나오든 소스는 바뀝니다. 하지만 디자인과 코드의 목표는 남습니다. 페이지캐시를 구현하는 방법은 달라지지만 페이지캐시의 목적과 큰 디자인은 오래가겠지요. 그러니 소스 한줄한줄보다는 왜 이렇게 구현했는가 목적이 뭔가를 생각하는게 처음 커널을 분석할때 필요한 태도인것 같습니다. 나중에 실무에서나 취미로나 버그를 잡을 때 특정 버전의 코드를 더 깊게 봐야할때가 있겠지요.
+
+###do_generic_file_read
+
+블럭 장치 파일(/dev/mybrd)이든 파일시스템의 파일이든 데이터를 읽을 때는 공통적으로 do_generic_file_read가 호출됩니다. 길고 복잡한 함수이므로 핵심적인 동작들만 따져보겠습니다.
+
+####함수 인자
+
+함수인자부터 뭔지 보겠습니다.
+
+* struct file *filep: 읽을 파일에 해당하는 file 객체입니다. file 구조체의 f_mapping이 struct address_space 객체를 가르키는 포인터입니다.
+* loff_t *ppos: read시스템콜을 호출하기전에 lseek 시스템콜을 써서 파일의 어디부터 읽을지를 선택합니다. lseek시스템콜은 실질적으로 어떤 처리를 하는게 아니라 struct file 객체의 f_pos 필드에 위치를 기록했다가 read나 write 시스템 콜이 호출되었을 때 읽어서 사용합니다.
+ * 페이지 캐시는 페이지단위로 데이터가 저장되어있습니다. 따라서 페이지캐시의 radix-tree에서 사용할 키값은 ppos 값을 페이지 크기로 나눈 값이 되겠지요.
+* struct iov_iter *iter: 파일시스템에서 사용하는 자료구조입니다. 페이지캐시에서 사용되는건 아니므로 http://revdev.tistory.com/55 를 참고하시기 바랍니다.
+ * 참고 추가: https://lwn.net/Articles/625077/
+* ssize_t written: generic_file_read_iter에서 direct IO가 발생해서 읽기가 일부 처리된 경우에 얼마나 읽기가 끝났는지 알려주는 값입니다. 그냥 함수가 호출될때의 값은 0으로 생각해도 됩니다. 데이터를 읽으면서 written의 값이 증가하고 읽기가 끝나면 written 값을 반환합니다.
+
+####find_get_page (= pagecache_get_page)
+
+find_get_page는 pagecache_get_page를 호출하는 wrapper 함수입니다.
+
+find_get_entry함수를 호출해서 패이지캐시에 이미 해당 offset이 있는지를 찾습니다. find_get_page에서 pagecache_get_page를 호출할 때 fgp_flags 값과 gfp_mask 값을 0으로 호출했으므로 결국 페이지캐시에 해당 offset이 없으면 null을 반환합니다.
+
+만약 fgp_flags에 FGP_CREATE 플래스가 있었다면 페이지를 할당하고, 페이지를 lru리스트에 포함합니다.
+
+find_get_entry를 잠깐 볼까요. 가장 먼저 radix_tree_lookup_slot함수를 호출해서 radix-tree의 트리에 저장된 page의 더블 포인터를 가져오고, radix_tree_deref_slot으로 더블포인터를 포인터로 바꾸고, page_cache_get_speculative로 페이지의 참조 카운터를 증가합니다.
+
+mybrd 드라이버에서 radix-tree에 페이지를 추가할 때 radix_tree_lookup 함수 하나만 사용했었습니다. 그런데 왜 여기에서는 radix_tree_lookup_slot을 사용할까요? 그 이유는 page_cache_get_speculative 함수의 주석에 있습니다. "This is the interesting part of the lockless pagecache"라는 설명이 있습니다. 즉 페이지를 찾아보는데 페이지를 찾는 중간에 다른 쓰레드에서 페이지를 해지하거나 다른데 사용했다면, 다시 페이지를 찾습니다. 결국 rcu_read_lock()만으로 페이지캐시를 구현하게 됩니다.
+
+사실 저도 왜 이 코드가 동작하는지 완벽하게 이해했다고 말할 수 없을것 같습니다. 정확한 설명은page_cache_get_speculative함수의 주석을 참고하시기 바랍니다. 어쨌든 제가 말씀드리고 싶은건 페이지캐시가 lockless로 구현됐다는 것입니다.
+```
+page_cache_sync_readahead (=ondemand_readahead=__do_page_cache_readahead)
+```
+mybrd의 콜스택을 보면 page_cache_sync_readahead가 호출됩니다. 페이지 캐시에 페이지가 없었다는 뜻입니다. page_cache_sync_readahead 코드를 보면 결국 __do_page_cache_readahead함수가 핵심입니다.
+
+__do_page_cache_readahead 함수 인자중에 몇개의 페이지를 읽을지 nr_to_read 값이 있습니다. 최초로 읽을 offset부터 미리 여러개의 페이지를 읽어놓는 것입니다. 그럼 사용자가 파일을 계속 읽을 때마다 IO가 발생하지 않고 페이지캐시에서 바로 데이터를 가져갈 수 있겠지요. radix_tree_lookup으로 해당 위치의 데이터가 페이지캐시에 있나 확인하고 없으면 page_cache_alloc_readahead 함수로 페이지를 할당합니다. 그리고 각 페이지마다 page->index 필드에 offset을 씁니다.
+
+그리고 read_pages 함수에서 이전에 할당한 페이지들에 블럭 장치의 데이터를 읽어옵니다. read_pages를 보면 mapping->a_ops->readpages와 mapping->a_ops->readpage를 호출합니다. mybrd는 블럭 장치이므로 def_blk_aops를 확인하면 어떤 함수가 호출될지 알 수 있습니다. def_blk_aops.readpages = blkdev_readpages 함수가 등록돼있으니 blkdev_readpages가 호출되겠네요.
+
+blk_start/finish_plug 함수는 참고 자료를 확인하세요.
+* http://nimhaplz.egloos.com/m/5598614
+* http://studyfoss.egloos.com/5585801
+
+이제 blkdef_readpages로 넘어왔습니다. 그리고 blkdev_readpages는 mpage_readpages를 호출합니다. mpage_readpages함수를 보면 주석이 매우 깁니다. 중요한 함수라는걸 알 수 있습니다. mpages_readpages 함수는 페이지를 lru에 추가하고, 임시로 사용할 bio를 생성해서 IO를 발생시킵니다. bio를 IO 스케줄러에 전달하는 함수가 바로 submit_bio함수입니다. bio를 생성하는 함수는 do_mpage_readpage이고, submit_bio를 호출하는 함수가 mpage_bio_submit입니다.
+
+####add_to_page_cache_lru
+페이지 하나를 페이지 캐시에도 넣고, lru 리스트에도 추가하는 함수입니다. 먼저 페이지를 lock합니다. 새로 할당된 페이지이므로 다른 쓰레드에서 사용할 염려가 없으므로 페이지가 잠겨있는지 확인할 필요가 없으니 __set_page_locked함수로 페이지를 잡급니다.
+
+__add_to_page_cache_locked는 다음 순서로 동작합니다.
+1. radix_tree_maybe_preload: radix_tree_preload와 같은 일을 하지만, 페이지 플래그에 따라 radix_tree_preload를 호출하지 않을 수도 있습니다.
+1. page_cache_get: get_page와 같습니다. 페이지의 참조 카운터를 증가시킵니다.
+1. page의 mapping, index 필드 설정
+1. page_cache_tree_insert: 트리에 페이지를 넣는 함수인데 mapping->tree_lock을 잡고 있는 상태에서 왜 radix_tree_insert를 안쓰고 page_cache_tree_insert를 구현했는지를 잘 모르겠습니다. 어쨋든 page_cache_tree_insert 코드를 보면 radix_tree_insert와 유사합니다.
+1. radix_tree_preload_end: radix_tree_preload를 사용했다면 radix_tree_preload_end를 꼭 호출해야합니다.
+1. __inc_zone_page_state: 각 zone마다 몇개의 페이지가 있고 어떤 페이지들이 어떤 상태인지 /proc/zoneinfo 파일에 통계 정보를 가지고 있습니다. 이 통계 정보를 갱신하는 함수입니다. NR_FILE_PAGES는 해당 zone에서 몇개의 페이지가 페이지캐시로 사용되었는지를 알려주는 값입니다. /proc/zoneinfo 파일에서 nr_file_pages 값에 해당됩니다.
+
+이제 페이지가 페이지캐시에 들어갔으니 lru_cache_add 함수로 페이지를 lru리스트에 추가합니다. lru_cache_add함수는 각 프로세별로 존재하는 lru_add_pvec 배열에 새로운 페이지를 추가합니다.
+
+참고로 __add_to_page_cache_locked함수에서도 페이지의 참조 카운터를 증가시키고, lru_cache_add에서도 페이지의 참조 카운터를 증가시킵니다. 이 말은 lru 리스트와 페이지캐시가 별도로 동작한다는 것입니다. lru에서 빠진다고해도 페이지캐시에서 빠지는게 아니기 때문입니다.
+
+####do_mpage_readpage
+복잡한 함수입니다만 mpage_alloc를 호출해서 가장 핵심은 bio 객체를 만든다는 것만 알면 될것같습니다.
+
+do_mpage_readpage인자를 보면
+* struct bio *bio: 처음에는 NULL값입니다. mpage_alloc 함수로 새로 bio 객체를 만들으라는 의미입니다. 한번 bio를 만들고나면 다음 for 루프에서 계속 다음 페이지를 위한 정보를 추가합니다. 그래서 for 루프가 종료된 다음에는 모든 페이지의 IO를 위한 정보를 가지게됩니다.
+* struct page *page: 새로 할당해서 페이지캐시와 lru 리스트에 추가된 페이지입니다. 장치로부터 데이터를 읽어서 이 페이지에 저장합니다.
+* unsigned nr_pages: 남은 페이지 갯수
+* sector_t *last_block_in_bio: bio에서 처리할 마지막 블럭의 섹터 번호
+* struct buffer_head *map_bh: bio를 만들면서 생성된 버퍼 헤드
+* unsigned long *first_logical_block: 첫번째 블럭 번호
+* get_block_t get_block: 파일시스템에서 파일 오프셋을 실제 파일시스템의 블럭 번호로 바꿔서 bh->b_blocknr 필드에 저장하는 함수입니다. 파일이라는건 연속된 데이터이지만, 사실 파일이 디스크에 연속적으로 저장될 수는 없습니다. 디스크 여기저기에 데이터가 저장되고, 어떤 파일의 어떤 부분이 디스크의 어디에 저장되었는지를 관리하는게 파일시스템의 주된 역할입니다. 그러므로 파일시스템마다 다른 정보를 얻어올 수 있도록 함수포인터를 전달합니다. 블럭 장치의 경우 blkdev_get_block 함수 포인터를 전달합니다. 블럭 장치는 사실 파일시스템이 없고 디스크 전체가 연속된 데이터로 봅니다. 따라서 전달된 블럭 번호를 그대로 버퍼헤드에 기록합니다. ext2의 경우 ext2_get_block 함수가 사용되는데, 파일시스템의 슈퍼블럭을 읽는등 파일시스템 자체의 정보를 활용할 것입니다.
+* gfp_t gfp: bio객체를 할당할 때 쓸 페이지 할당 플래그
+
+처음 do_mpage_readpage가 호출될 때는 bio가 NULL이고 map_bh의 b_state, b_size 값들도 0이므로  mpage_alloc으로 bio를 할당합니다.
+
+그 다음 bio_add_page가 호출되면서 bio의 bi_io_vec 필드에 새로운 페이지가 추가됩니다. 우리는 현재 블럭 장치의 페이지캐시를 만들고있으므로 블럭 크기가 곧 페이지 크기가 됩니다. 따라서 bi_io_vec에 추가될 IO 길이도 모두 4096이 됩니다. 한번에 한 페이지씩 읽는 것입니다. 드라이버에서 bio의 bi_io_vec 필드를 출력해봤을때 모두 길이가 4096인걸 확인했었습니다.
+
+mpage_readpages에서 루프를 돌면서 다시 do_mpage_readpage를 호출했을 때도 페이지의 크기와 블럭의 크기가 같으므로 사실상 버퍼헤드를 수정할 일은 없습니다. 매번 bio_add_page가 호출되면서 bio에 새로운 페이지를 추가하는 일이 사실상 전부입니다.
+
+참고로 mpage_alloc은 단순합니다. bio_alloc으로 bio를 만들고 꼭 필요한 필드를 셋팅합니다.
+* bio_alloc: struct bio 객체 생성
+* bio->bi_bdev: IO가 발생해야할 struct block_device 객체 포인터
+* bio->bi_iter.bi_sector: 첫번째 섹터 번호
+
+mpage_alloc은 첫번째 섹터 번호만 설정합니다. 추가 정보는 bio_add_page에서 추가합니다. bio_add_page 함수도 간단합니다. bio의 bi_io_vec 배열을 가져와서 bv_page, bv_len, bv_offset을 초기화하는데 블럭 장치는 한번에 한 페이지씩 읽으므로 bv_len은 항상 4096이되고 bv_offset은 0이 될 것입니다. bi_vcnt를 증가시켜서 bi_io_vec배열을 차례대로 초기화합니다.
+
+####mpage_bio_submit
+
+mpage_alloc으로 생성한 bio 객체를 submit_bio 함수에 전달합니다. 결국 submit_bio는 generic_make_request를 통해서 mybrd로 넘어갑니다. bio 처리가 끝나면 호출된 bio->bi_end_io 콜백함수는 mpage_end_io입니다. add_to_page_cache_lru에서 페이지를 잠궜으므로 mpage_end_io에서는 페이지 락을 풀고 페이지를 페이지의 데이터가 막 읽혀진 상태이니 uptodate 상태로 표시합니다. 그리고 다쓴 bio를 해지합니다.
+
+####copy_page_to_iter
+
+iter에는 유저 레벨의 버퍼에 대한 정보가 들어있습니다. page에 있는 데이터를 유저 레벨 버퍼로 복사합니다.
+iov_iter_count에서 iter->count 필드가 0이되면 do_generic_file_read가 종료됩니다.
+
