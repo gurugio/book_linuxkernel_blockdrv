@@ -312,22 +312,104 @@ struct work_struct {
 * entry: work-queue내부의 리스트에 연결될 리스트 노드
 * func: work-queue에서 해당 작업이 선택되면 func에 저장된 함수
 
-###__queue_work
-struct work_struct 객체를 work-queue에 추가하는 함수입니다. 함수인자는 다음과 같습니다.
+###queue_work
+
+work-queue에 새로운 작업을 추가하는 함수입니다. 함수인자를 보면
+* wq: work-queue를 표현하는 struct workququq_struct 객체의 포인터
+* work: work-queue에 추가될 작업을 표현하는 struct work_struct 객체의 포인터
+
+결국 work-queue에 work를 추가하는 것 뿐입니다.
+다음과 같이 함수 코드를 보면 최종적으로 ```__queue_work```라는 함수를 호출합니다.
+
+```
+static inline bool queue_work(struct workqueue_struct *wq,
+			      struct work_struct *work)
+{
+	return queue_work_on(WORK_CPU_UNBOUND, wq, work);
+}
+
+/**
+ * queue_work_on - queue work on specific cpu
+ * @cpu: CPU number to execute work on
+ * @wq: workqueue to use
+ * @work: work to queue
+ *
+ * We queue the work to a specific CPU, the caller must ensure it
+ * can't go away.
+ *
+ * Return: %false if @work was already on a queue, %true otherwise.
+ */
+bool queue_work_on(int cpu, struct workqueue_struct *wq,
+		   struct work_struct *work)
+{
+	bool ret = false;
+	unsigned long flags;
+
+	local_irq_save(flags);
+
+	if (!test_and_set_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(work))) {
+		__queue_work(cpu, wq, work);
+		ret = true;
+	}
+
+	local_irq_restore(flags);
+	return ret;
+}
+EXPORT_SYMBOL(queue_work_on);
+```
+여기에서 locak_irq_save를 호출한 것을 보면 작업을 관리할 때 CPU별로 따로 관리한다는걸 알 수 있습니다. 즉 0번 CPU에서 queue_work함수가 호출되었으면 이때 추가된 작업은 추후에 0번 CPU에서 실행될 가능성이 높다는 것입니다.
+
+```__queue_work```함수인자는 다음과 같습니다.
 * int cpu: work가 실행될 cpu 번호
 * wq: work가 추가될 work-queue
 * work: struct work_struct 객체 포인터
 
-함수 코드를 보면 가장 먼저 WORK_CPU_
+함수 코드를 읽어보겠습니다.
+```
+retry:
+	if (req_cpu == WORK_CPU_UNBOUND)
+		cpu = raw_smp_processor_id();
+```
+가장 먼저 현재 실행되고 있는 CPU가 뭔지를 알아냅니다.
+
+```
+	struct pool_workqueue *pwq;
+...
+	/* pwq which will be used unless @work is executing elsewhere */
+	if (!(wq->flags & WQ_UNBOUND))
+		pwq = per_cpu_ptr(wq->cpu_pwqs, cpu);
+	else
+		pwq = unbound_pwq_by_node(wq, cpu_to_node(cpu));
+```
+
 함수가 하는 일은 사실상 work-queue의 리스트 헤드에 새로운 노드를 추가하는 것이지만, 구현을 보면 간단하지 않습니다. 왜냐면 struct pool_workqueue 라는게 있기 때문입니다.
 
+참고문서
+* http://studyfoss.egloos.com/5626173
 
+일단 queue_work에서 WQ_UNBOUND 플래그를 사용하지않았으므로, work-queue에서 cpu_pwqs라는 per-cpu변수에서 pool_workqueue 객체를 가져온다는걸 알 수 있습니다. 이게 뭔지는 나중에 확인하겠습니다. 여기에서 생각해야할 것은 work-queue에 per-cpu변수가 있고, 결국 각 CPU마다 작업이 연결될 것입니다.
 
+```
+	struct list_head *worklist;
+...
+
+	if (likely(pwq->nr_active < pwq->max_active)) {
+		trace_workqueue_activate_work(work);
+		pwq->nr_active++;
+		worklist = &pwq->pool->worklist;
+	} else {
+		work_flags |= WORK_STRUCT_DELAYED;
+		worklist = &pwq->delayed_works;
+	}
+
+	insert_work(pwq, work, worklist, work_flags);
+```
+pwq에 현재 실행중인 작업이 몇개인지 세는 pwq->nr_active 카운트를 증가시키고, pwq->pool->worklist 리스트헤드에 work를 추가합니다.
 
 
 ###struct workqueue_struct
 
-workqueue_struct 구조체는 
+workqueue_struct 구조체에서 가장 주의해서 봐야할 것은 우리가 queue_work에서 봤듯이 실제 작업이 연결될 cpu_pwqs 필드입니다.
 
 ```
 /*
@@ -370,6 +452,139 @@ struct workqueue_struct {
 	struct pool_workqueue __rcu *numa_pwq_tbl[]; /* PWR: unbound pwqs indexed by node */
 };
 ```
+cpu_pwqs 필드는 per-cpu 변수이고 struct pool_workqueue라는 구조체의 객체입니다. 그리고 pool_workqueue 구조체는 struct worker_pool 구조체를 포함합니다.
+
+```
+struct pool_workqueue {
+	struct worker_pool	*pool;		/* I: the associated pool */
+	struct workqueue_struct *wq;		/* I: the owning workqueue */
+	int			work_color;	/* L: current color */
+	int			flush_color;	/* L: flushing color */
+	int			refcnt;		/* L: reference count */
+	int			nr_in_flight[WORK_NR_COLORS];
+						/* L: nr of in_flight works */
+	int			nr_active;	/* L: nr of active works */
+	int			max_active;	/* L: max active works */
+	struct list_head	delayed_works;	/* L: delayed works */
+	struct list_head	pwqs_node;	/* WR: node on wq->pwqs */
+	struct list_head	mayday_node;	/* MD: node on wq->maydays */
+
+	/*
+	 * Release of unbound pwq is punted to system_wq.  See put_pwq()
+	 * and pwq_unbound_release_workfn() for details.  pool_workqueue
+	 * itself is also sched-RCU protected so that the first pwq can be
+	 * determined without grabbing wq->mutex.
+	 */
+	struct work_struct	unbound_release_work;
+	struct rcu_head		rcu;
+} __aligned(1 << WORK_STRUCT_FLAG_BITS);
+
+struct worker_pool {
+	spinlock_t		lock;		/* the pool lock */
+	int			cpu;		/* I: the associated cpu */
+	int			node;		/* I: the associated node ID */
+	int			id;		/* I: pool ID */
+	unsigned int		flags;		/* X: flags */
+
+	struct list_head	worklist;	/* L: list of pending works */
+	int			nr_workers;	/* L: total number of workers */
+
+	/* nr_idle includes the ones off idle_list for rebinding */
+	int			nr_idle;	/* L: currently idle ones */
+
+	struct list_head	idle_list;	/* X: list of idle workers */
+	struct timer_list	idle_timer;	/* L: worker idle timeout */
+	struct timer_list	mayday_timer;	/* L: SOS timer for workers */
+
+	/* a workers is either on busy_hash or idle_list, or the manager */
+	DECLARE_HASHTABLE(busy_hash, BUSY_WORKER_HASH_ORDER);
+						/* L: hash of busy workers */
+
+	/* see manage_workers() for details on the two manager mutexes */
+	struct mutex		manager_arb;	/* manager arbitration */
+	struct worker		*manager;	/* L: purely informational */
+	struct mutex		attach_mutex;	/* attach/detach exclusion */
+	struct list_head	workers;	/* A: attached workers */
+	struct completion	*detach_completion; /* all workers detached */
+
+	struct ida		worker_ida;	/* worker IDs for task name */
+
+	struct workqueue_attrs	*attrs;		/* I: worker attributes */
+	struct hlist_node	hash_node;	/* PL: unbound_pool_hash node */
+	int			refcnt;		/* PL: refcnt for unbound pools */
+
+	/*
+	 * The current concurrency level.  As it's likely to be accessed
+	 * from other CPUs during try_to_wake_up(), put it in a separate
+	 * cacheline.
+	 */
+	atomic_t		nr_running ____cacheline_aligned_in_smp;
+
+	/*
+	 * Destruction of pool is sched-RCU protected to allow dereferences
+	 * from get_work_pool().
+	 */
+	struct rcu_head		rcu;
+} ____cacheline_aligned_in_smp;
+```
+커널에 이렇게 주석이 많은 구조체도 많지 않을 것입니다. 그만큼 복잡하고, 성능에 큰 영향을 미치는 구조체들일 것입니다.
+
+###init_workqueues
+
+
+
+```
+	for_each_possible_cpu(cpu) {
+		struct worker_pool *pool;
+
+		i = 0;
+		for_each_cpu_worker_pool(pool, cpu) {
+			BUG_ON(init_worker_pool(pool));
+			pool->cpu = cpu;
+			cpumask_copy(pool->attrs->cpumask, cpumask_of(cpu));
+			pool->attrs->nice = std_nice[i++];
+			pool->node = cpu_to_node(cpu);
+
+			/* alloc pool ID */
+			mutex_lock(&wq_pool_mutex);
+			BUG_ON(worker_pool_assign_id(pool));
+			mutex_unlock(&wq_pool_mutex);
+		}
+	}
+```
+
+
+```
+/* the per-cpu worker pools */
+static DEFINE_PER_CPU_SHARED_ALIGNED(struct worker_pool [NR_STD_WORKER_POOLS],
+				     cpu_worker_pools);
+                     
+#define for_each_cpu_worker_pool(pool, cpu)				\
+	for ((pool) = &per_cpu(cpu_worker_pools, cpu)[0];		\
+	     (pool) < &per_cpu(cpu_worker_pools, cpu)[NR_STD_WORKER_POOLS]; \
+	     (pool)++)
+```
+
+
+
+###alloc_workqueue
+
+위에서 몇가지 구조체를 봤는데, 이제 이것들이 실제로 어떻게 사용되는지를 보겠습니다. kblockd_workqueue라는 work-queue가 생성될때 alloc_workqueue라는 함수를 사용했었습니다. alloc_workqueue함수를 ㅂ
+```
+int __init blk_dev_init(void)
+{
+	BUILD_BUG_ON(__REQ_NR_BITS > 8 *
+			FIELD_SIZEOF(struct request, cmd_flags));
+
+	/* used for unplugging and affects IO latency/throughput - HIGHPRI */
+	kblockd_workqueue = alloc_workqueue("kblockd",
+					    WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);
+	if (!kblockd_workqueue)
+		panic("Failed to create kblockd\n");
+```        
+
+
+
 
 
 
