@@ -531,7 +531,13 @@ struct worker_pool {
 
 ###init_workqueues
 
+우선 work-queue를 사용할 수 있도록 초기화를 하는 init_workqueues 함수를 보겠습니다.
 
+```
+	cpu_notifier(workqueue_cpu_up_callback, CPU_PRI_WORKQUEUE_UP);
+```
+
+cpu_notifier는 각 CPU코어가 동작을 시작하면 호출될 함수들을 등록하는 함수입니다. 따라서 각 CPU 코어마다 workqueue_cpu_up_callback함수를 호출하도록 만들어놓은 것입니다.
 
 ```
 	for_each_possible_cpu(cpu) {
@@ -552,7 +558,7 @@ struct worker_pool {
 		}
 	}
 ```
-
+그리고 각 CPU 코어를 위한 worker_pool라는걸 만듭니다. for_each_cpu_worker_pool 매크로로 감춰져있는데, 실제로는 cpu_worker_pools라는 per-cpu변수를 만듭니다.
 
 ```
 /* the per-cpu worker pools */
@@ -564,6 +570,9 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct worker_pool [NR_STD_WORKER_POOLS],
 	     (pool) < &per_cpu(cpu_worker_pools, cpu)[NR_STD_WORKER_POOLS]; \
 	     (pool)++)
 ```
+
+cpu_worker_pools는 per-cpu변수인데, 각각이 struct worker_pool 타입 객체의 배열로 이루어져있습니다. 쉽게 생각하면 결국 CPU마다 여러개의 worker_pool 객체를 가지고 있게 됩니다.
+
 
 
 
@@ -584,10 +593,55 @@ int __init blk_dev_init(void)
 ```        
 
 
+```
+	wq = kzalloc(sizeof(*wq) + tbl_size, GFP_KERNEL);
 
+...
+	/* init wq */
+	wq->flags = flags;
+	wq->saved_max_active = max_active;
+	mutex_init(&wq->mutex);
+	atomic_set(&wq->nr_pwqs_to_flush, 0);
+	INIT_LIST_HEAD(&wq->pwqs);
+	INIT_LIST_HEAD(&wq->flusher_queue);
+	INIT_LIST_HEAD(&wq->flusher_overflow);
+	INIT_LIST_HEAD(&wq->maydays);
+```
 
+```
+	if (alloc_and_link_pwqs(wq) < 0)
+		goto err_free_wq;
+```
 
+```
+	/*
+	 * Workqueues which may be used during memory reclaim should
+	 * have a rescuer to guarantee forward progress.
+	 */
+	if (flags & WQ_MEM_RECLAIM) {
+		struct worker *rescuer;
 
+		rescuer = alloc_worker(NUMA_NO_NODE);
+		if (!rescuer)
+			goto err_destroy;
+
+		rescuer->rescue_wq = wq;
+		rescuer->task = kthread_create(rescuer_thread, rescuer, "%s",
+					       wq->name);
+		if (IS_ERR(rescuer->task)) {
+			kfree(rescuer);
+			goto err_destroy;
+		}
+
+		wq->rescuer = rescuer;
+		kthread_bind_mask(rescuer->task, cpu_possible_mask);
+		wake_up_process(rescuer->task);
+	}
+```
+
+```
+	list_add_tail_rcu(&wq->list, &workqueues);
+```
 
 
 
