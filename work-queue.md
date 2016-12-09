@@ -627,7 +627,38 @@ static struct worker *create_worker(struct worker_pool *pool)
 	worker->task = kthread_create_on_node(worker_thread, worker, pool->node,
 					      "kworker/%s", id_buf);
 ```
-드디어 struct woker라는 구조체가 나오는데, 바로 실제 실행될 쓰레드를 관리하는 구조체입니다. alloc_worker는 그냥 kzalloc_node를 호출하는 함수인데, 쓰레드가 실행될 CPU로부터 가까운 노드의 메모리를 할당하는 것입니다. 그리고 worker의 구조체를 초기화하고 kthread_create_on_node함수로 쓰레드를 하나 만듭니다. 이 쓰레드가 하는 일은 worker_thread 함수를 보면 알 수 있습니다.
+드디어 struct woker라는 구조체가 나오는데, 바로 실제 실행될 쓰레드를 관리하는 구조체입니다. alloc_worker는 그냥 kzalloc_node를 호출하는 함수인데, 쓰레드가 실행될 CPU로부터 가까운 노드의 메모리를 할당하는 것입니다. 그리고 worker의 구조체를 초기화하고 kthread_create_on_node함수로 쓰레드를 하나 만듭니다. 
+쓰레드의 이름을 보니 "kworker/숫자:숫자"로 나오네요. 진짜 그런 커널 쓰레드가
+있는지 확인해보겠습니다. 2개의 숫자중 앞의 숫자는 pool의 번호나 pool의
+CPU번호가 되고, 두번째 숫자는 ida_simple_get으로 할당받은 임의의 숫자입니다.
+```
+$ ps aux | grep kworker
+root         4  0.0  0.0      0     0 ?        S    15:59   0:00 [kworker/0:0]
+root         5  0.0  0.0      0     0 ?        S<   15:59   0:00 [kworker/0:0H]
+root        17  0.0  0.0      0     0 ?        S<   15:59   0:00 [kworker/1:0H]
+root        23  0.0  0.0      0     0 ?        S    15:59   0:00 [kworker/2:0]
+root        24  0.0  0.0      0     0 ?        S<   15:59   0:00 [kworker/2:0H]
+root        30  0.0  0.0      0     0 ?        S    15:59   0:00 [kworker/3:0]
+...
+```
+여러개의 쓰레드가 있네요. 만약 kworker라는 이름의 쓰레드가 너무 많거나 이런
+이름의 쓰레드중에 D 상태인 쓰레드가 있다면, 어디선가 잘못된 작업을 생성한 것일
+수 있습니다. 아니면 작업이 종료되지못하고 계속 대기를 하고있을 수도 있습니다.
+kworker쓰레드중에 하나를 골라서 무엇을 실행하고있는지 볼까요.
+```
+$ sudo cat /proc/3129/stack
+[<ffffffff810960bb>] worker_thread+0xcb/0x4c0
+[<ffffffff8109c3d8>] kthread+0xd8/0xf0
+[<ffffffff817fa49f>] ret_from_fork+0x3f/0x70
+[<ffffffffffffffff>] 0xffffffffffffffff
+```
+현재 worker_thread함수에 머물러 있습니다. 커널을 gdb로 확인해봐도 알겠지만,
+worker_thread의 코드만 봐도, 현재 worker_thread함수안에서 잠든 상태인걸로
+생각됩니다. 만약 잘못된 작업을 실행하고있거나 락에 걸린 작업을 실행중이라면
+다른 함수를 실행하고있다고 나오겠지요. 그렇게 work-queue에 대한 디버깅을 할 수
+있습니다.
+
+이 쓰레드가 하는 일은 worker_thread 함수를 보면 알 수 있습니다.
 
 ```
 static int worker_thread(void *__worker)
