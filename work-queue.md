@@ -651,12 +651,11 @@ static int worker_thread(void *__worker)
 		}
 	} while (keep_working(pool));
 ```
-최초의 쓰레드가 하는 일은 이 while 루프에 있습니다. 바로 worker_pool에 있는 worklist 리스트를 읽어서 이 리스트에 있는 각 작업들을 실행하는 것입니다. queue_work 함수가 하는 일이 바로 이 worklist 리스트에 새로운 작업을 연결하는 것이었는데, 바로 worklist 리스트에있는 작업을 실행하는 쓰레드가 이때 만들어집니다.
-
+최초의 쓰레드가 하는 일은 이 while 루프에 있습니다. 바로 worker_pool에 있는 worklist 리스트를 읽어서 이 리스트에 있는 각 작업들을 실행하는 것입니다. queue_work 함수가 하는 일이 바로 이 worklist 리스트에 새로운 작업을 연결하는 것이었는데, queue_work로 worklist 리스트에 추가된 작업을 실행하는 쓰레드가 만들어지는 것입니다.
 
 ###alloc_workqueue
 
-위에서 몇가지 구조체를 봤는데, 이제 이것들이 실제로 어떻게 사용되는지를 보겠습니다. kblockd_workqueue라는 work-queue가 생성될때 alloc_workqueue라는 함수를 사용했었습니다. alloc_workqueue함수를 ㅂ
+kblockd_workqueue라는 work-queue가 생성될때 alloc_workqueue라는 함수를 사용했었습니다. alloc_workqueue함수를 알아보겠습니다.
 ```
 int __init blk_dev_init(void)
 {
@@ -668,14 +667,26 @@ int __init blk_dev_init(void)
 					    WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);
 	if (!kblockd_workqueue)
 		panic("Failed to create kblockd\n");
-```        
-
-
 ```
-	wq = kzalloc(sizeof(*wq) + tbl_size, GFP_KERNEL);
+blk_dev_init함수에서 kblockd_workqueue가 생성됩니다.
+
+alloc_workqueue함수는 ```__alloc_workqueue_key```함수를 호출합니다.
+```
+struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
+					       unsigned int flags,
+					       int max_active,
+					       struct lock_class_key *key,
+					       const char *lock_name, ...)
+{
+...
+    wq = kzalloc(sizeof(*wq) + tbl_size, GFP_KERNEL);
 
 ...
-	/* init wq */
+
+	max_active = max_active ?: WQ_DFL_ACTIVE;
+	max_active = wq_clamp_max_active(max_active, flags, wq->name);
+    
+    /* init wq */
 	wq->flags = flags;
 	wq->saved_max_active = max_active;
 	mutex_init(&wq->mutex);
@@ -685,80 +696,14 @@ int __init blk_dev_init(void)
 	INIT_LIST_HEAD(&wq->flusher_overflow);
 	INIT_LIST_HEAD(&wq->maydays);
 ```
+새로운 workqueue_struct 타입의 객체를 만들어야하므로 kzalloc으로 메모리를 할당받습니다. 그리고 각 필드를 초기화합니다. max_active가 0이면 256으로 바꿉니다. 총 256개의 작업이 연결될 수 있다는 것입니다.
 
 ```
 	if (alloc_and_link_pwqs(wq) < 0)
 		goto err_free_wq;
 ```
-
+alloc_and_link_pwqs는 workqueue_struct에서 cpu_pwqs필드를 초기화하는 함수입니다.
 ```
-	/*
-	 * Workqueues which may be used during memory reclaim should
-	 * have a rescuer to guarantee forward progress.
-	 */
-	if (flags & WQ_MEM_RECLAIM) {
-		struct worker *rescuer;
-
-		rescuer = alloc_worker(NUMA_NO_NODE);
-		if (!rescuer)
-			goto err_destroy;
-
-		rescuer->rescue_wq = wq;
-		rescuer->task = kthread_create(rescuer_thread, rescuer, "%s",
-					       wq->name);
-		if (IS_ERR(rescuer->task)) {
-			kfree(rescuer);
-			goto err_destroy;
-		}
-
-		wq->rescuer = rescuer;
-		kthread_bind_mask(rescuer->task, cpu_possible_mask);
-		wake_up_process(rescuer->task);
-	}
-```
-
-```
-	list_add_tail_rcu(&wq->list, &workqueues);
-```
-
-
-
-
-```
-----------------------------
-
-DECLARE_WORK
-
-struct work_struct
-
-struct workqueue_struct
-
-alloc_workqueue/destroy_workqueue
-
-queue_work
-
-
-
-    kblockd_workqueue = alloc_workqueue("kblockd",
-					    WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);
-
-__alloc_workqueue_key
-- fmt = "kblockd"
-- flags = WQ_MEM_RECLAIM | WQ_HIGHPRI
-- max_active = 0
-- key = NULL
-- lock_name = NULL
-
-alloc_and_link_pwqs
-alloc_worker
-kthread_create
-	for_each_pwq(pwq, wq)
-		pwq_adjust_max_active(pwq);
-
-	list_add_tail_rcu(&wq->list, &workqueues);
-
-
-
 static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 {
 	bool highpri = wq->flags & WQ_HIGHPRI;
@@ -773,7 +718,7 @@ static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 			struct pool_workqueue *pwq =
 				per_cpu_ptr(wq->cpu_pwqs, cpu);
 			struct worker_pool *cpu_pools =
-				per_cpu(cpu_worker_pools, cpu);   -----> cpu_worker_pools?? wq->cpu_pwqs->pool = cpu_worker_pools
+				per_cpu(cpu_worker_pools, cpu);
 
 			init_pwq(pwq, wq, &cpu_pools[highpri]);
 
@@ -782,12 +727,21 @@ static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 			mutex_unlock(&wq->mutex);
 		}
 		return 0;
-
-
-
-
-__queue_work -> insert_work
-+ pwq->pool->worklist 리스트에 work->entry 추가
-+ pwq참조 카운트 증가
+```
+alloc_percpu는 매크로함수입니다. 인자로 전달한 구조체의 타입을 확인해서 해당 타입의 per-cpu변수를 만듭니다.
 
 ```
+#define alloc_percpu(type)						\
+	(typeof(type) __percpu *)__alloc_percpu(sizeof(type),		\
+						__alignof__(type))
+```
+이렇게 cpu_pwqs객체를 만들었으면 각 CPU 코어별 cpu_worker_pools 객체와 struct pool_workqueue 객체를 연결합니다.
+결국 per-cpu변수라는걸 무시하고 보면 최종적으로 이렇게 된다고 보면 됩니다.
+```
+wq->cpu_pwqs->pool = cpu_worker_pools;
+```
+
+간단하게 생각하면 모든 work-queue가 공유할 cpu_worker_pools를 만든 다음 cpu_worker_pools에 작업들을 연결하는 것입니다. 만약 각 work-queue가 자기만의 per-cpu 변수를 만들어서 쓰레드를 관리한다면, 프로세서가 256개가 있는 대규모 서버에서는 하나의 work-queue가 256개의 쓰레드를 생성하게 될 것이고, 시스템에 10개의 work-queue만 있어도 2560개의 쓰레드가 됩니다. 당연히 이렇게 모든 work-queue가 공유할 리스트를 만들고, 거기에 각 work-queue는 작업만 추가하게되면 불필요한 쓰레드를 만들 필요가 없겠지요.
+
+다시한번 참고문서를 보시면서 이전 버전에서는 어떻게 구현되었었고, 어떤 문제가 생겨서 왜 이런 디자인이 되었는지를 보신다면 전체적인 설계에 대해 감이 오실것입니다.
+참고: http://studyfoss.egloos.com/5626173
