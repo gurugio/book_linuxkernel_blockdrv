@@ -1,3 +1,5 @@
+gitbook: https://gurugio.gitbooks.io/linuxkernel_blockdriver/content/
+
 #v4.4 커널에서 블럭 디바이스 드라이버 만들기
 
 최근..은 아니고 몇년전 리눅스 커널에 큰 변화가 있었습니다. 커널에서 가장 성능에 민감한 부분이 메모리 할당과 블럭 장치인데요, 블럭 장치 관련 코드에 대규모 패치가 들어갔습니다.
