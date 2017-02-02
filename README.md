@@ -1,5 +1,7 @@
 gitbook: https://gurugio.gitbooks.io/linuxkernel_blockdriver/content/
 
+(On translation)
+
 #v4.4 커널에서 블럭 디바이스 드라이버 만들기
 
 최근..은 아니고 몇년전 리눅스 커널에 큰 변화가 있었습니다. 커널에서 가장 성능에 민감한 부분이 메모리 할당과 블럭 장치인데요, 블럭 장치 관련 코드에 대규모 패치가 들어갔습니다.
@@ -40,5 +42,24 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 이 책을 번역해보려고 했던 적이 있었습니다. 커널 자체가 낯선 분들은 한글 자료를 먼저 보시면 도움이 되실것입니다.
 
 https://gurugio.kldp.net/wiki/wiki.php/gurugio/MemoryManagement
+
+# INDEX
+
+* [개발환경](environment.md)
+* [mybrd 드라이버의 뼈대 빌드](mybrd_skeleton.md)
+* [디스크 만들기](create_disk.md)
+* [램디스크 구현](create_ramdisk.md)
+* [request-mode](request-mode.md)
+* [multiqueue-mode](multiqueue-mode.md)
+* [pagecache_and_blockdriver](pagecacheand_blockdriver.md)
+* [page-flags](page-flags.md)
+* [시스템콜과 블럭 장치 flush](systemcall_flushblock.md)
+* [per-cpu변수와 통계 정보(v2.6.11)](per-cpu_statistics.md)
+* [wait-queue](wait-queue.md)
+* [ida and request-queue](ida_and_request-queue.md)
+* [spinlock](spinlock.md)
+* [read-copy-update](read-copy-update.md)
+* [work-queue](work-queue.md)
+* [TODO](todo.md)
 
 
