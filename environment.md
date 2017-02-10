@@ -1,24 +1,30 @@
-#개발환경
-v4.4버전의 커널을 빌드해서 qemu로 부팅해보겠습니다. qemu, busybox 툴을 이용합니다.
+# prepare the environment
 
-##커널 소스 준비
+Let us start with build v4.4 kernel and booting it with qemu emulator and busybox.
+We cannot avoid rebooting when we develope kernel driver because a tiny mis-behavior can kill the entire OS.
+So we should use qemu emulator to make a virtual machine.
+Even-if our driver do something wrong and kill the OS, we don't need to reboot our desktop.
+We will just kill a qemu process and run it again.
 
-커널에서 드라이버를 개발한다는건 사실 운영체제를 계속 재부팅할 일이 생길 수밖에 없다는 것입니다. 아무리 드라이버를 동적으로 로딩되게해도 잘못 만들면 운영체제 자체가 죽어버리게 되니까요. 그래서 우리는 qemu를 써서 가상 환경을 만들어서 커널을 실행하겠습니다. 불필요한 일을 줄이기위해 동적 로딩도 쓰지 않고, 그냥 커널 자체를 부팅하면서 mybrd 드라이버를 실행하겠습니다. 
+Please refer to other documents if you don't know what qemu and busybox are.
 
-가장 먼저 준비할건 당연히 커널입니다. 최신 버전은 이 강좌를 언제 읽으시냐에 따라 달라질것이니 제 맘대로 v4.4 를 기준으로 하겠습니다. 
+## get kernel source
 
-리눅스 커널을 받으려면 당연히 리눅스 커널의 홈페이지에 접속해야겠지요.
+The first thing is, of course, kernel itself.
+We don't need the latest version, so we will download v4.4.
 
+The homepage of Linux kernel is here:
 https://www.kernel.org/
 
-리눅스 커널을 다운받는 방법은 홈페이지에 나온대로 git으로 받는 방법과 압축 파일을 받는 방법이 있습니다. 저는 git을 선호합니다만 편한대로 사용하면 됩니다. 참고로 압축 파일의 링크를 남깁니다.
-
+As the guide in the homepage, we can download the kernel source with git or download zipped file.
+For your convenience, you can download here:
 https://www.kernel.org/pub/linux/kernel/v4.x/linux-4.4.tar.gz
 
-커널 분석하는데 태깅을 안하면 안되겠지요. emacs + global을 쓰는 방법은 다른 강좌에 남겨놨으니 참고하세요. vi를 쓰시는 분들은 어서 emacs로 전환해서 광명찾으시구요 ;-)
+Source editor and tagging tool and other tools are up to you.
 
+We will build the kernel soon.
 
-##qemu 설치
+## qemu 설치
 
 qemu는 그냥 설치만 하면 됩니다. 배포판에 따라 다르니 저는 참고용으로 우분투용 설치법만 남겨놓겠습니다. 최종적으로 qemu-system-x86_64 실행파일만 설치되면 됩니다.
 
