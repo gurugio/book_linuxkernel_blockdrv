@@ -24,9 +24,9 @@ Source editor and tagging tool and other tools are up to you.
 
 We will build the kernel soon.
 
-## qemu 설치
+## install qemu
 
-qemu는 그냥 설치만 하면 됩니다. 배포판에 따라 다르니 저는 참고용으로 우분투용 설치법만 남겨놓겠습니다. 최종적으로 qemu-system-x86_64 실행파일만 설치되면 됩니다.
+Just install qemu tool. It depends on the distribution you use. For example, you can install qemu on Ubuntu with following commands.
 
 ```
 # apt-get install qemu-system
@@ -34,20 +34,19 @@ qemu는 그냥 설치만 하면 됩니다. 배포판에 따라 다르니 저는 
 /usr/bin/qemu-system-x86_64
 ```
 
+I will describe only a few options that are used in this document.
+Qemu has so many powerful features like other virtualization tools like Vmware and VirtualBox.
+Please refer to qemu manual for the detail.
 
-qemu를 더 다양하게 활용해보고 싶으신 분들은 다음 링크를 참고하세요.
+# make boot filesystem, initramfs, with busybox
 
-https://gurugio.kldp.net/wiki/wiki.php/qemu_custom_kernel
+Kernel can boot but that's all. We cannot do anything unless we have tools such like shell, dd and ls. It will take huge amount of time if we download source of each tool and build and install. So our dear hackers already made a toolset including essential tools for Linux OS. It is busybox. With the busybox, we can make a simple filesystem and the kernel can execute shell in the filesystem.
 
-busybox로 initramfs 준비
-
-커널만 달랑 있으면 부팅은 되겠지만, 그 외에는 아무것도 할 수 없습니다. 쉘이 있어야 드라이버를 테스트해볼 수 있을거고, 테스트를 하려면 쉘뿐 아니라 dd같은 툴들도 필요합니다. 그런 최소한의 툴들을 모아놓은게 바로 busybox입니다. 이 busybox로 커널이 실행될 파일시스템을 만들겠습니다.
-
-일단 busybox 홈페이지에서 가장 최신 소스를 받아서 압축을 풉니다.
+Please visit the homepage and download the latest source.
 
 http://busybox.net
 
-빌드는 다음 순서로 진행됩니다.
+Build can be done with following commands.
 
 ```
 # make defconf
@@ -55,29 +54,31 @@ http://busybox.net
 # make
 ```
 
-make menuconfig 명령을 실행하면 busybox의 옵션을 선택할 수 있습니다. 커널 빌드하고 매우 유사하지요. 반드시 선택해야하는 옵션이 하나 있습니다.
+The busybox is frequently used with Linux kernel. So it has the same build interface "make menuconfig".
+You MUST set one option to make a bootable filesystem with the busybox.
+You can find the option with following sequence.
 
 Busybox Settings --> Build Options --> Build Busybox as a static binary
 
-라는 옵션을 찾아서 꼭 선택해야합니다.
+The option is look like following.
 
 ```
  [*] Build BusyBox as a static binary (no shared libs) 
 ```
 
-이렇게 [ ] 안에 [*] 표시가 되면 선택된 것입니다. ESC를 계속 누르면 저장할 거냐는 질문이 나오는데 Yes를 선택하면 됩니다. 우리가 만든 커널과 파일시스템에는 일반적인 프로그램이 실행되는데 필요한 라이브러리들이 없습니다. 그런 라이브러리들을 하나하나 설치하려면 커널 공부할 시간은 없어집니다. 그러니 파일시스템에 들어갈 모든 프로그램들을 라이브러리없이도 실행될 수 있도록 정적 빌드를 하는 것입니다.
+If you press space or enter key, ``[]`` will be ``[*]``. The the options is selected. Press ESC and select YES.
+We don't have time to install the shared libraries that busybox program will seek when it runs. So we build the busybox statically. After builing the bootable filesystem, you can see that there is no library.
 
-그 다음은 make 를 실행합니다.
+Now we are ready. Run make now.
 
-빌드가 끝나면 _install 이라는 디렉토리가 생깁니다.
+After all, ``_install`` directory will be created.
 
 ```
 # ls _install/
 bin  linuxrc  sbin  usr
 ```
-
-_install 안에는 이렇게 몇가지 디렉토리가 들어있습니다.
-_install/bin에는 뭐가 있을까요.
+You can see several directories in there.
+Let us check what are there in ``_install/bin`` directory.
 
 ```
 # ls _install/bin -l
@@ -172,10 +173,9 @@ lrwxrwxrwx 1 gohkim gohkim       7 Nov 12  2015 vi -> busybox
 lrwxrwxrwx 1 gohkim gohkim       7 Nov 12  2015 watch -> busybox
 lrwxrwxrwx 1 gohkim gohkim       7 Nov 12  2015 zcat -> busybox
 ```
+All programs we want are there.
 
-_install/bin 디렉토리에 우리가 사용할 다양한 툴들이 설치된걸 알 수 있습니다.
-
-이제 busybox는 빌드됐으니 이걸로 커널 부팅에 사용할 파일 시스템을 만들 차례입니다. initramfs/x86-busybox 라는 디렉토리에 파일 시스템을 만들어 보겠습니다. 다른 디렉토리를 원하시면 원하시는대로 만드시면 됩니다.
+Now we have tools. Next we make a filesystem. Following commands make a filesystem in initramfs/x86-busybox directory.
 
 ```
 $ mkdir -p ./initramfs/x86-busybox
@@ -183,10 +183,11 @@ $ cd ./initramfs/x86-busybox
 $ mkdir -pv {bin,sbin,etc,proc,sys,usr/{bin,sbin}}
 $ cp -av ./busybox/_install/* .
 ```
+Above command create directories, bin, sbin, etc, proc, sys, usr/bin, usr/sbin, that are essential for Linux OS.
+And it copies busybox tools into proper directories.
+Finally x86-busybox directory is a root filesystem for kernel we will build for ourselves.
 
-다시 설명하면 x86-busybox라는 디렉토리에 bin, sbin, etc, proc, sys, usr/bin, usr/sbin 등의 디렉토리를 만들고, 빌드된 busybox의 _install 디렉토리에 있는 bin, sbin 등의 디렉토리를 덮어씌우는 것입니다. 그럼 결국 x86-busybox라는 디렉토리에 우리가 만든 커널이 부팅하고 마운트할 파일시스템의 디렉토리가 됩니다.
-
-마지막으로 해야할 일이 하나 있습니다. init 파일을 만드는 것입니다. 커널은 커널 자신의 부팅이 끝나면 마지막으로 파일시스템의 /init 파일을 읽어서 실행합니다. 만약 이 파일이 없다면 커널은 init을 찾을 수 없다는 에러 메세지를 내고 정지될 것입니다. 다음처럼 init 파일을 bash 스크립트로 만들어 줍니다.
+One more job to be done for bootable filesystem. It is creating init file. The Linux kernel run /init file after it finishes booting process. It there is no init program, the kernel would terminate itself. The init can be script or executable file. Let's make init like following.
 
 ```
 $ vim init
@@ -207,20 +208,24 @@ exec /bin/sh
 $ chmod +x init
 ```
 
-마지막은 initramfs를 만드는 명령입니다.
+Filesystem is ready. Next command creates a single image file with filesystem directory.
+Run the following command at the root directory of our filesystem.
+It generates a single file "initramfs-busybox-x86.cpio.gz".
 
 ```
 $ find . -print0 \
     | cpio --null -ov --format=newc \
     | gzip -9 > ./initramfs-busybox-x86.cpio.gz
 ```
+Please check man page of each tool for the detail.
 
-각 명령들의 자세한 설명은 man page를 참고하세요.
+## build kernel
 
+Building Linux kernel is time-consuming job and sometime we should try many times.
+But we can simply build kernel at the moment because we run the kernel on qemu, not real machine.
+And also we don't need any kernel drivers. So we can reduce amount of building time.
 
-##커널 빌드해서 부팅하기
-
-커널은 어떻게 빌드할까요. 간단합니다. 다만 사용하는 컴퓨터에 따라 시간이 좀 걸릴 수 있습니다. 다음 명령대로만 하면 됩니다.
+Following commands are for kernel build.
 
 ```
 $ make x86_64_defconfig
@@ -228,31 +233,33 @@ $ make kvmconfig
 $ make -j8 bzImage
 ```
 
-간단하게만 설명하겠습니다.
+Let me describe briefly.
+* make x86_64_defconfig: enable options in arch/x86/configs/x86_64_defconfig file
+  * x86_64_defconfig file has common options for INTEL/AMD processor
+* make kvmconfig: add several options for qemu
+* make bzImage: build only kernel
+  * "make" will build kernel and drivers. But building drivers takes much more time than kernel. And we don't need drivers.
+  * "make bzImage" will build only kernel image
+  * -j8: use 8 cores. You can set the number of cores in your system. More cores takes less time.
 
-* make x86_64_defconfig: arch/x86/configs/x86_64_defconfig 파일을 커널 옵션으로 사용합니다.
-* make kvmconfig: qemu를 사용할때 필요한 커널 옵션들을 추가합니다.
- * -j8에서 8은 사용할 컴퓨터의 코어 갯수로 바꾸면 됩니다. 그러면 멀티코어를 전부 사용해서 빌드를 합니다.
-* make bzImage: make 만 실행하면 커널과 드라이버를 모두 빌드합니다. 커널 빌드보다 드라이버 빌드 시간이 훨씬 깁니다. 그러니 커널만 빌드하도록 make bzImage를 실행합니다.
+After build, please check arch/x86/boot/bzImage file exists. It is the kernel image file.
 
-잠시 기다리면 빌드가 완료됐다는 메세지가 나옵니다. arch/x86/boot/bzImage 파일이 생성되었는지 확인해봅시다. 이 파일이 바로 커널입니다.
+Following command is booting the kernel image and filesystem image.
 
-다음 명령으로 커널과 파일시스템을 부팅할 수 있습니다. 스크립트 파일로 만들어놓으면 편하겠지요.
 ```
 $ qemu-system-x86_64 -smp 4 -kernel arch/x86/boot/bzImage \
 -initrd ../initramfs-busybox-x86.cpio.gz \
 -nographic -append "console=ttyS0 init=/init" -enable-kvm
 ```
-간단한 옵션 설명입니다.
 
-* -kernel: 커널의 위치
-* -initrd: busybox로 빌드한 파일시스템 파일의 위치
-* -nographic -append "console=ttyS0 init=/init": qemu를 실행한 터미널에 커널 부팅 메세지를 곧바로 출력합니다. init옵션은 부팅될 커널에게 init 파일의 위치를 가르쳐줍니다.
-* -enable-kvm: kvm이라는 가상 머신에 필요한 커널 드라이버를 활용합니다. 없어도 상관없지만 부팅이 약간 더 빨라지므로 편리합니다.
+Let me introduce the options.
+* -kernel: location of kernel image
+* -initrd: location of filesystem image
+* -nographic -append "console=ttyS0 init=/init": print the kernel booting message on your terminal
+  * Without this option, you cannot see anything.
+* -enable-kvm: use kvm driver. It is not mandatory but it makes booting fast.
 
-qemu로 가상의 컴퓨터를 만들고 그 컴퓨터에 우리가 빌드한 커널을 부팅시키는 것입니다. 파일시스템까지 같이 가상 컴퓨터에 실행시켜주니 너무나 편리합니다. 십수년전에 qemu가 성숙하지 못했을 때는 커널 개발이 얼마나 번거로웠을지 생각해보세요. qemu는 저같은 커널, 드라이버 개발자에게 정말 구글보다 더 소중한 존재입니다.
-
-명령을 실행하자마자 아래와 같이 커널이 부팅하면서 출력하는 메세지들이 주르륵 나와야합니다.
+You can see the booting message of Linux kernel.
 ```
 [    0.000000] Linux version 4.4.0+ (gurugio@giohnote) (gcc version 5.2.1 20151010 (Ubuntu 5.2.1-22ubuntu2) ) #19 SMP Mon Oct 31 23:05:54 CET 2016
 [    0.000000] Command line: console=ttyS0 init=/init
@@ -270,23 +277,19 @@ Boot took 2.02 seconds
 /bin/sh: can't access tty; job control turned off
 / # 
 ```
-마지막에는 쉘이 실행됩니다. ls 도 실행해보고 각 디렉토리들을 확인해보시면 busybox로 만든 디렉토리인 것을 알 수 있습니다. 제가 ramfs이니 뭐니 설명해도 감이 안잡힐 수 있습니다. 하지만 이렇게 실행해보니 실제 하드디스크에 설치된 파일시스템이 아니라 ramfs (Ram filesystem)이 뭔지 감이오시지 않나요? 리눅스를 계속 쓰시다보면 언젠가는 또 다른 기회로 ramfs를 만나게 될 것입니다.
 
-이 강좌에서는 리눅스 운영체제를 설명하려는게 아니므로 이런 툴등의 환경은 쓰기만 하겠습니다.
+A shell is executed by init script. Test directories in the filesystem and check they are the filesystem we built with busybox.
 
-마지막으로 종료하기 위해서는 먼저 ctrl-a c 를 실행해서 qemu의 모니터를 실행합니다. 그리고 quit을 입력하면 qemu가 종료됩니다.
+We just use busybox and qemu to test Linux kernel, so I don't describe them in detail.
+Above options are all we need to know at the moment.
+
+The last command we need to know is terminating qemu.
+"ctrl-a c" will run qemu monitor mode. "quit" command terminates qemu.
 ```
 QEMU 2.3.0 monitor - type 'help' for more information
 (qemu) quit
 ```
 
-별다른 설명없이 그냥 따라하기 식으로 환경을 만들어봤습니다. 제가 빼먹은 것이 있을지도 모릅니다. 천천히 해보시고 안되는게 있으면 답글로 알려주세요. 수정하겠습니다.
-
-참고로 다음 링크에 접속하시면 설명을 빼고 실행할 명령어들만 써있습니다. 
-
-https://gurugio.kldp.net/wiki/wiki.php/qemu_kernel
-
-다음 링크에는 qemu를 이용해서 우분투를 실행하고 qemu의 더 많은 옵션들을 활용해서 네트워크 접속을 하는 등 더 본격적인 개발 환경을 꾸미는 방법이 있습니다. qemu의 옵션뿐 아니라 네트워크 설정등을 하려면 꽤 많은 옵션들과 설정 툴들을 알아야하지만 한번만 환경을 만들어놓으면 계속 쓸 수 있으므로 쓸만합니다
-
-https://gurugio.kldp.net/wiki/wiki.php/qemu_custom_kernel
-
+That's it.
+Now we can build our kernel and driver and run it on virtual machine.
+We can start making driver.
