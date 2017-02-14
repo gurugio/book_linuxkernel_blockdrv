@@ -1,8 +1,13 @@
-# mybrd 드라이버의 뼈대 빌드
+# skeleton code of mybrd
 
-이제 준비는 끝났으니 mybrd 드라이버를 만들기 시작합니다. 일단 아주 간단한 껍데기만 완성해서 우리가 만든 드라이버가 제대로 실행되는지 확인하고, 커널이 어떻게 드라이버를 빌드하고 실행시키는지를 알아보겠습니다. 커널 소스를 조금씩 보기 시작합니다. Linux device driver나 Understanding the Linux kernel 등의 참고 도서들도 같이 보시면 더 좋습니다. 설명하려는 커널의 버전이 다르므로 책과는 약간 다른 코드들이 보일 것입니다. 하지만 만약 제 설명에 이상한게 있으면 무조건 참고 도서들의 설명을 기준으로 이해하시면 됩니다.
+Boring environment setup is done.
+Let us start coding mybrd driver.
+First we start with skeleton code to only help us to check whether the driver is loaded correctly.
+And this chapter will describe how to add our driver code into kernel so that the driver is built and run with kernel.
+We will start reading kernel source now.
+Please keep "Linux device driver" and "Understanding the Linux kernel" books close to you.
 
-## 커널에 mybrd.c 소스 추가
+## add mybrd.c to kernel
 
 커널에 드라이버를 추가하는 방법을 소개하겠습니다. 아주 간단합니다. 리눅스 커널은 이미 전세계 개발자들이 이십년이 넘게 개발해왔으므로 개발하기 편리한 도구들을 모두 갖추고 있습니다.
 
