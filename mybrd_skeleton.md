@@ -204,6 +204,13 @@ The module_exit() is for registering the exit point of the driver.
 커널 부팅과 드라이버 실행 확인
 
 이제 커널을 빌드해서 부팅해보겠습니다. mybrd_init()함수에 메세지를 출력하도록 해놨으니 커널이 드라이버를 실행할 때 메세지들이 출력되야합니다.
+
+Every devices in Unix/Linux system exists as files in /dev directory.
+Everything is file in Unix/Linux system.
+So we should introduce our driver to kernel and request to create a file in /dev directory.
+
+That can be done with register_blkdev() function.
+
 ```
 /sys # dmesg | grep mybrd
 [    0.323640] mybrd: mybrd major=253
