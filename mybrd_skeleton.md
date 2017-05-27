@@ -165,8 +165,6 @@ Building drivers/block/mybrd.o is completed. And building bzImage is also comple
 
 ## skeleton code
 
-예제 코드는 몇번 더 수정될 수 있으므로 여기서 복사해놓지 않고 github에 ch01-skel 브랜치를 만들어서 관리하겠습니다. git에 익숙하지 않으시면 아래 링크로 확인하시면 됩니다.
-
 I saved source file in github. You can see full source with following link.
 
 https://github.com/gurugio/mybrd/blob/ch01-skel/mybrd.c
@@ -181,15 +179,23 @@ major.h and blkdev.h are, as shown by names, related to device number and block 
 
 ### mybrd_init/mybrd_exit
 
-mybrd_init() 함수는 드라이버가 시작될때 호출되는 함수입니다. 정확히 말하면 모든 드라이버는 시작 함수가 있어야합니다. 그리고 그 시작 함수는 module_init()로 등록합니다. mybrd.c의 끝에보면 module_init()함수에 mybrd_init 함수 포인터를 넘기는걸 알 수 있습니다. 커널이 커널 자체의 부팅이 어느정도 끝나면 드라이버들을 하나씩 실행시키겠지요. 그럴때 mybrd 드라이버가 실행될텐데, 커널에게 mybrd의 드라이버를 처음 시작될때 이 함수를 실행시켜달라고 저장해놓은 것입니다.
+mybrd_init() fundtion is the entry pointe of the driver. It's called when the drier is loaded and starts to execute.
+Every driver should have starting point that is registered by module_init() function.
+In mybrd.c file, you can see module_init() is called with mybrd_init function pointer at the end of the file.
 
-module_init()이 뭐냐면 간단히 말해서 커널 이미지의 특정 위치에 함수 포인터를 모아놓는 일을 합니다. 함수 포인터의 크기는 64비트니까 포인터의 배열이나 마찬가지지요. 그 특정 위치가 어디냐를 지정하는게 ```__attribute__``` 와 ```__section__``` 키워드입니다. 
+There are two ways to load a driver.
+First is loading a driver dynamically after kernel booting is finished.
+The loader finds a function that is registered by module_init() and calls it.
+Second is loading a driver when kernel boots.
+After kernel finishes booting itself, kernel calls all functions that is registered by module_init().
+You can select how the driver is loaded when you selects kernel option.
 
-어쨌든 드라이버를 구현하는 입장에서는 커널이 이미 드라이버가 실행되기 위해 필요한 프레임워크를 마련해놨으니, 거기에 따라서 module_init() 만 호출하면 끝입니다.
+The module_init() function selects entry points of each driver into a specific area.
+That area is just like an array of function pointers.
 
-시작이 있으면 끝도 있겠지요. 드라이버가 끝날때의 함수는 module_exit()로 지정합니다. 우리는 mybrd_exit()함수를 드라이버의 끝으로 지정합니다.
+The module_exit() is for registering the exit point of the driver.
 
-###register_blkdev/unregister_blkdev
+### register_blkdev/unregister_blkdev
 
 모든 장치는 결국 /dev 디렉토리에 있는 장치 파일로 존재합니다. 유닉스에서는 모든게 파일이니까요. 그럼 그 파일을 만들려면 커널에 우리 드라이버를 소개하고 파일을 만들어달라고 부탁해야합니다.
 
