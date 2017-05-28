@@ -44,8 +44,6 @@ There are many fields in struct request_queue.
 You don't need to understand all of the fields right now.
 Let's skip the detail and just use the code as it is.
 
-하나만 알고 넘어가면 됩니다. blk_queue_make_request()가 request-queue라는 객체와 mybrd_make_request_fn()함수를 연결한다는 것만 생각하면 됩니다. 큐가 있으면 큐에 데이터를 넣는 코드가 있고 빼는 코드가 있고, 그리고 큐에서 빼낸 데이터를 처리하는 코드가 있겠지요. 커널은 이 request-queue에 request라는걸 넣고 빼주는걸 알아서 해줍니다. 왜냐면 모든 드라이버에 공통적인 코드이기 때문입니다. 커널은 결국 드라이버를 위한 프레임워크 역할을 합니다. 만약 모든 드라이버에 공통적으로 사용될만한 코드가 있으면 커널 개발자들은 반드시 커널 함수로 구현해놓습니다. 그리고 드라이버 개발자가 이용하도록 합니다.  드라이버 개발이 편하라는 이유도 있지만 더 큰 이유는 버그를 줄이기 위해서입니다. 드라이버 개발자들이 해야할 일이 많을 수록 드라이버는 더 불안정해지겠지요. 커널 코드는 전세계 커널 개발자들이 리뷰하고 테스트합니다. 또 전세계 수많은 스마트폰, 서버 등의 머신에서 돌아가면서 자동으로 테스트되고 버그 리포팅이 됩니다. 하지만 드라이버는 특정 회사에서 개발하게 되고, 결국 커널의 약점은 대부분 드라이버가 됩니다. 따라서 최대한 드라이버 코드가 커널 함수를 많이 쓸수록 더 안정적인 드라이버가 되고, 그게 결국 운영체제 전체의 안정성을 높여줍니다.
-
 Please note one thing.
 blk_queue_make_request() creates a connection between request_queue object and mybrd_make_request_fn() function.
 Every queue has a pair of producer and consumer which add data in the queue and extract data from the queue, respectively.
@@ -72,7 +70,13 @@ Creating and destroying the request_queue is common, so kernel already has funct
 Many kernel objects have thier own creating and destroying functions.
 Whenever you want to use a kernel object, you must check there is dedicated function for it.
 
-커널이 큐를 관리해주므로 우리가 만들건 결국 큐에서 빠져나온 request를 분석해서 뭘 할지를 결정하는 것입니다. 만약 우리가 하드디스크 드라이버의 개발자라면 request를 분석해서 메모리 어디에 있는 데이터를 읽거나 쓰면 되는지 확인해서, 메모리의 데이터를 하드디스크로 보내거나 디스크의 데이터를 메모리로 가져오기면 하면 됩니다. request 객체에 대한 설명도 자연스럽게 나왔습니다. request 객체는 결국 메모리 어디에 얼마만큼의 데이터를 읽거나 쓰라는 정보를 가지는 객체입니다. 직접 mybrd_make_request_fn()함수를 만들어보면 이해가 될 것입니다.
+Kernel handles queue. What should the driver do?
+Driver gets the request from kernel and processes the request.
+If our driver is the hard-disk driver, the driver get the request and check where the data is, disk or memory according to data direction, where the data should be written or read and so on.
+So now we can understand what information is in a request.
+In brief, the request has all information to read&write data between memory and block device, for instance, where the data is, how big the data is and so on.
+I'll explain mybrd_make_request_fn() soon.
+You can understand the request in detail then.
 
 ####gendisk object
 
