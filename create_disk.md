@@ -1,27 +1,33 @@
-# 디스크 만들기
-진짜 블럭 장치를 만드는건 이제부터 시작입니다. 이전 장에서는 드라이버가 시작되는 코드를 만들었는데, 이번 장에서는 가상의 디스크를 만들어서 커널과 드라이버가 어떻게 데이터를 주고받는지를 알아보겠습니다.
+# create a disk
 
-참고: https://lwn.net/Articles/25711/
-소스: https://github.com/gurugio/mybrd/blob/ch02-disk/mybrd.c
+Let's start developing a block device.
+Until last chapter, we set up an environment to test our driver and created a skeleton code.
+In this chapter, we will created a virtual disk and check how data is transferred between kernel and the block driver.
 
-## request_queue와 gendisk 객체 만들기
-소스를 보면서 강좌를 읽어주세요.
+reference: https://lwn.net/Articles/25711/
+driver source: https://github.com/gurugio/mybrd/blob/ch02-disk/mybrd.c
 
-###struct mybrd_device
+## request_queue and gendisk
+
+Please read this document and source in parallel.
+
+### struct mybrd_device
 
 mybrd 드라이버 전체를 관리할 데이터를 모아놨습니다. mybrd_lock은 당연히 동기화를 위해 만들었고 나머지 mybrd_queue와 mybrd_disk는 각 객체를 생성하는 코드에서 설명하겠습니다.
 
 어쨌든 블럭 장치의 드라이버에서 가장 중요한 데이터 구조가 바로 struct request_queue와 struct gendisk라는걸 기억해야합니다. 이번 장 전체가 바로 이 두개의 데이터 구조를 어떻게 만들고 사용하느냐를 설명하는 것입니다.
 
-###mybrd_init()
+
+
+### mybrd_init()
 
 mybrd_init에서 바뀐건 mybrd_alloc()을 호출하는 것입니다. 이름 그대로 mybrd_device 구조체의 객체를 만듭니다. 당연히 struct request_queue와 struct gendisk 구조체의 객체로 만들겠지요.
 
-###mybrd_alloc()
+### mybrd_alloc()
 
 mybrd_alloc은 mybrd_device, request_queue, gendisk총 3가지의 객체를 만듭니다.
 
-####mybrd_device object
+#### mybrd_device object
 
 객체가 저장될 메모리를 할당하고 spin-lock을 초기화합니다. 별게 없지요.
 
