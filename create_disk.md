@@ -28,7 +28,6 @@ I'll introduce what each object is for in following sections.
 
 #### mybrd_device object
 
-객체가 저장될 메모리를 할당하고 spin-lock을 초기화합니다. 별게 없지요.
 struct mybrd_device is a set of spin-lock, request_queue and gendisk.
 Those three objects are used by almost every function in the driver.
 Therefore I make struct mybrd_device to pass them to each function easily.
@@ -38,6 +37,16 @@ Therefore I make struct mybrd_device to pass them to each function easily.
 request-queue라는걸 만듭니다. 이것이 뭐냐면 request가 저장되는 queue입니다. 큐는 특정한 데이터 객체들이 한쪽으로 저장되고 한쪽으로 빠져나가는 걸 말하지요. 결국 request라는게 저장되고 빠져나가는 큐입니다. request는 다음 mybrd_make_request_fn() 함수에서 처리하게됩니다.
 
 일단 여기에서는 request-queue라는 객체를 만들고, 그 객체의 각 필드를 초기화한다는걸 생각하면 됩니다. 각 세부 필드를 하나씩 설명하려면 한꺼번에 외울게 너무 많아지니 생략합니다.
+
+Let me introduce a request_queue object of struct request_queue.
+Queue is a data structure to store data on one side and extract data on another side.
+So request_queue is a queue to store requests.
+Requests in the queue is extracted and consumed by mybrd_make_request_fn() function as I will introduce later.
+
+At this point, you should know there is a queue so-called request-queue and it should be initialized as source code does.
+There are many fields in struct request_queue.
+You don't need to understand all of the fields right now.
+Let's skip the detail and just use the code as it is.
 
 하나만 알고 넘어가면 됩니다. blk_queue_make_request()가 request-queue라는 객체와 mybrd_make_request_fn()함수를 연결한다는 것만 생각하면 됩니다. 큐가 있으면 큐에 데이터를 넣는 코드가 있고 빼는 코드가 있고, 그리고 큐에서 빼낸 데이터를 처리하는 코드가 있겠지요. 커널은 이 request-queue에 request라는걸 넣고 빼주는걸 알아서 해줍니다. 왜냐면 모든 드라이버에 공통적인 코드이기 때문입니다. 커널은 결국 드라이버를 위한 프레임워크 역할을 합니다. 만약 모든 드라이버에 공통적으로 사용될만한 코드가 있으면 커널 개발자들은 반드시 커널 함수로 구현해놓습니다. 그리고 드라이버 개발자가 이용하도록 합니다.  드라이버 개발이 편하라는 이유도 있지만 더 큰 이유는 버그를 줄이기 위해서입니다. 드라이버 개발자들이 해야할 일이 많을 수록 드라이버는 더 불안정해지겠지요. 커널 코드는 전세계 커널 개발자들이 리뷰하고 테스트합니다. 또 전세계 수많은 스마트폰, 서버 등의 머신에서 돌아가면서 자동으로 테스트되고 버그 리포팅이 됩니다. 하지만 드라이버는 특정 회사에서 개발하게 되고, 결국 커널의 약점은 대부분 드라이버가 됩니다. 따라서 최대한 드라이버 코드가 커널 함수를 많이 쓸수록 더 안정적인 드라이버가 되고, 그게 결국 운영체제 전체의 안정성을 높여줍니다.
 
