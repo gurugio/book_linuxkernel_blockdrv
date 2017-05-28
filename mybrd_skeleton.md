@@ -197,19 +197,15 @@ The module_exit() is for registering the exit point of the driver.
 
 ### register_blkdev/unregister_blkdev
 
-모든 장치는 결국 /dev 디렉토리에 있는 장치 파일로 존재합니다. 유닉스에서는 모든게 파일이니까요. 그럼 그 파일을 만들려면 커널에 우리 드라이버를 소개하고 파일을 만들어달라고 부탁해야합니다.
-
-드라이버가 시작될 때 장치 파일을 만들기 위해 커널에 의뢰하는 함수가 register_blkdev 입니다. 장치 파일을 만드려면 major number와 minor number가 필요한데 이 major number를 커널로부터 받아오는 함수입니다.
-
-커널 부팅과 드라이버 실행 확인
-
-이제 커널을 빌드해서 부팅해보겠습니다. mybrd_init()함수에 메세지를 출력하도록 해놨으니 커널이 드라이버를 실행할 때 메세지들이 출력되야합니다.
-
 Every devices in Unix/Linux system exists as files in /dev directory.
 Everything is file in Unix/Linux system.
 So we should introduce our driver to kernel and request to create a file in /dev directory.
+That is what register_blkdev() function does.
 
-That can be done with register_blkdev() function.
+# kernel booting and driver loading
+
+Now let's boot kernel. Our driver is loaded automatically because it is merged into kernel.
+mybrd_init() function prints some message, so we should be able to find following message in kernel messages as following.
 
 ```
 /sys # dmesg | grep mybrd
@@ -217,10 +213,18 @@ That can be done with register_blkdev() function.
 [    0.323868] mybrd: 
 [    0.323868] mybrd: module loaded
 ```
-드라이버가 major number를 받아왔습니다. 장치가 제대로 등록됐는지 확인하려면 /proc/devices 파일을 확인하면 됩니다. 이 파일에는 커널에 등록된 장치들의 major number를 보여줍니다. register_blkdev() 함수에 장치의 이름을 my-ramdisk로 등록했으니 /proc/devices 파일에 my-ramdisk가 있는지 확인해보겠습니다.
+
+We can confirm the driver get a major number from kernel.
+And we can check /proc/devices if device is registered correctly.
+The /proc/devices file shows the major number of each devices that are registered to kernel.
+Our driver registers the name of device as my-ramdisk via register_blkdev() function.
+So we can find my-ramdisk in the /proc/device file as following.
+
 ```
 # grep my-ramdisk /proc/devices 
 253 my-ramdisk
 ```
-그런데 아직 /dev에 새로운 파일이 없습니다. 장치 파일은 /dev에 있어야하는데 어디간걸까요. 지금까지는 장치 파일을 등록하기위한 번호를 받은 것이고 아직 장치 파일을 만든건 아닙니다. 다음 강좌에서 장치 파일을 만들어보겠습니다.
 
+But you should note that there is no device file in /dev directory.
+So far, we registered device and get the number from kernel but did not create device file.
+We will do that in the next chapter.
