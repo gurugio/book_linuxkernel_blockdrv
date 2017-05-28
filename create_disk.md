@@ -9,29 +9,31 @@ driver source: https://github.com/gurugio/mybrd/blob/ch02-disk/mybrd.c
 
 ## request_queue and gendisk
 
-Please read this document and source in parallel.
+We will create two object of ``struct request_queue`` and ``struct gendisk`` that are the essential for the block driver.
+Please read following each section and source code in parallel.
 
 ### struct mybrd_device
 
-mybrd 드라이버 전체를 관리할 데이터를 모아놨습니다. mybrd_lock은 당연히 동기화를 위해 만들었고 나머지 mybrd_queue와 mybrd_disk는 각 객체를 생성하는 코드에서 설명하겠습니다.
+``struct mybrd_device`` is selection of data that is used for whole mybrd driver.
+mybrd_lock is lock for synchronization.
+mybrd_queue and mybrd_disk are the objects of request_queue and gendisk data structures.
+I'll explain them in following section with the functions which create them.
+Please note again that this chapter is dedicated for creating request_queue and gendisk objects because they are essential for the block driver.
 
-어쨌든 블럭 장치의 드라이버에서 가장 중요한 데이터 구조가 바로 struct request_queue와 struct gendisk라는걸 기억해야합니다. 이번 장 전체가 바로 이 두개의 데이터 구조를 어떻게 만들고 사용하느냐를 설명하는 것입니다.
+### mybrd_init() / mybrd_alloc()
 
-
-
-### mybrd_init()
-
-mybrd_init에서 바뀐건 mybrd_alloc()을 호출하는 것입니다. 이름 그대로 mybrd_device 구조체의 객체를 만듭니다. 당연히 struct request_queue와 struct gendisk 구조체의 객체로 만들겠지요.
-
-### mybrd_alloc()
-
-mybrd_alloc은 mybrd_device, request_queue, gendisk총 3가지의 객체를 만듭니다.
+mybrd_init() calls register_blkdev() to register itself and calls mybrd_alloc() to create object of mybrd_device structure.
+And mybrd_alloc() also creates objects of struct request_queue and struct gendisk.
+I'll introduce what each object is for in following sections.
 
 #### mybrd_device object
 
 객체가 저장될 메모리를 할당하고 spin-lock을 초기화합니다. 별게 없지요.
+struct mybrd_device is a set of spin-lock, request_queue and gendisk.
+Those three objects are used by almost every function in the driver.
+Therefore I make struct mybrd_device to pass them to each function easily.
 
-####request_queue object
+#### request_queue object
 
 request-queue라는걸 만듭니다. 이것이 뭐냐면 request가 저장되는 queue입니다. 큐는 특정한 데이터 객체들이 한쪽으로 저장되고 한쪽으로 빠져나가는 걸 말하지요. 결국 request라는게 저장되고 빠져나가는 큐입니다. request는 다음 mybrd_make_request_fn() 함수에서 처리하게됩니다.
 
