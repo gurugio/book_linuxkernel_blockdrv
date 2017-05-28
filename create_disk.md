@@ -34,10 +34,6 @@ Therefore I make struct mybrd_device to pass them to each function easily.
 
 #### request_queue object
 
-request-queue라는걸 만듭니다. 이것이 뭐냐면 request가 저장되는 queue입니다. 큐는 특정한 데이터 객체들이 한쪽으로 저장되고 한쪽으로 빠져나가는 걸 말하지요. 결국 request라는게 저장되고 빠져나가는 큐입니다. request는 다음 mybrd_make_request_fn() 함수에서 처리하게됩니다.
-
-일단 여기에서는 request-queue라는 객체를 만들고, 그 객체의 각 필드를 초기화한다는걸 생각하면 됩니다. 각 세부 필드를 하나씩 설명하려면 한꺼번에 외울게 너무 많아지니 생략합니다.
-
 Let me introduce a request_queue object of struct request_queue.
 Queue is a data structure to store data on one side and extract data on another side.
 So request_queue is a queue to store requests.
