@@ -37,7 +37,7 @@ Therefore I make struct mybrd_device to pass them to each function easily.
 Let me introduce a request_queue object of struct request_queue.
 Queue is a data structure to store data on one side and extract data on another side.
 So request_queue is a queue to store requests.
-Requests in the queue is extracted and consumed by mybrd_make_request_fn() function as I will introduce later.
+Requests in the queue is extracted by kernel and consumed by mybrd_make_request_fn() function as I will introduce later again.
 
 At this point, you should know there is a queue so-called request-queue and it should be initialized as source code does.
 There are many fields in struct request_queue.
@@ -46,7 +46,31 @@ Let's skip the detail and just use the code as it is.
 
 하나만 알고 넘어가면 됩니다. blk_queue_make_request()가 request-queue라는 객체와 mybrd_make_request_fn()함수를 연결한다는 것만 생각하면 됩니다. 큐가 있으면 큐에 데이터를 넣는 코드가 있고 빼는 코드가 있고, 그리고 큐에서 빼낸 데이터를 처리하는 코드가 있겠지요. 커널은 이 request-queue에 request라는걸 넣고 빼주는걸 알아서 해줍니다. 왜냐면 모든 드라이버에 공통적인 코드이기 때문입니다. 커널은 결국 드라이버를 위한 프레임워크 역할을 합니다. 만약 모든 드라이버에 공통적으로 사용될만한 코드가 있으면 커널 개발자들은 반드시 커널 함수로 구현해놓습니다. 그리고 드라이버 개발자가 이용하도록 합니다.  드라이버 개발이 편하라는 이유도 있지만 더 큰 이유는 버그를 줄이기 위해서입니다. 드라이버 개발자들이 해야할 일이 많을 수록 드라이버는 더 불안정해지겠지요. 커널 코드는 전세계 커널 개발자들이 리뷰하고 테스트합니다. 또 전세계 수많은 스마트폰, 서버 등의 머신에서 돌아가면서 자동으로 테스트되고 버그 리포팅이 됩니다. 하지만 드라이버는 특정 회사에서 개발하게 되고, 결국 커널의 약점은 대부분 드라이버가 됩니다. 따라서 최대한 드라이버 코드가 커널 함수를 많이 쓸수록 더 안정적인 드라이버가 되고, 그게 결국 운영체제 전체의 안정성을 높여줍니다.
 
-request-queue객체를 만들고 해지하는 커널 함수가 따로있는 것도 메모리 할당만 하면 되는게 아니라, 그 외에 request-queue 객체의 많은 필드들을 초기화해야하는데, 그런 초기화들이 드라이버마다 다른게 아니라 공통적이기 때문입니다. 많은 커널 객체들이 할당 함수를 따로 가지고 있습니다. 그럴때는 반드시 할당 함수를 사용하고 kmalloc등을 써서 직접 객체를 생성하고 초기화하지 않도록 주의해야합니다.
+Please note one thing.
+blk_queue_make_request() creates a connection between request_queue object and mybrd_make_request_fn() function.
+Every queue has a pair of producer and consumer which add data in the queue and extract data from the queue, respectively.
+Can you guess where the producer and consumer of request_queue are?
+Kernel already has both of the producer and consumer.
+Because they are common for all block device, kernel developers implements the generic framework to handle request_queue for device driver developers.
+(One of kernel developer's job is making a common framework for device drivers.
+It can reduce the total size of kernel code. Less code generates less bug.
+And it's also comfortable for driver developers.
+Kernel code is reviewd by so many open source developers and tested by so many machines all of the world.
+But device driver is usually developed by a company.
+Which could be more reliable? Of course, kernel is reviewd more and tested more.
+So driver should use kernel function as much as it can.
+If you become driver developer, please remember that you should use kernel function.
+And if your function looks common, please report it to kernel community.
+You will be welcomed.)
+
+blk_queue_make_request() function introduces mybrd_queue and mybrd_make_request_fn() to kernel.
+Then kernel can add a request into mybrd_queue and extract a request and pass it to mybrd_make_request_fn() function.
+
+There is a pair of functions to create and destroy the request_queue: blk_alloc_queue_node() and blk_cleanup_queue.
+NEVER use other memory allocation functions like kmalloc.
+Creating and destroying the request_queue is common, so kernel already has functions for them.
+Many kernel objects have thier own creating and destroying functions.
+Whenever you want to use a kernel object, you must check there is dedicated function for it.
 
 커널이 큐를 관리해주므로 우리가 만들건 결국 큐에서 빠져나온 request를 분석해서 뭘 할지를 결정하는 것입니다. 만약 우리가 하드디스크 드라이버의 개발자라면 request를 분석해서 메모리 어디에 있는 데이터를 읽거나 쓰면 되는지 확인해서, 메모리의 데이터를 하드디스크로 보내거나 디스크의 데이터를 메모리로 가져오기면 하면 됩니다. request 객체에 대한 설명도 자연스럽게 나왔습니다. request 객체는 결국 메모리 어디에 얼마만큼의 데이터를 읽거나 쓰라는 정보를 가지는 객체입니다. 직접 mybrd_make_request_fn()함수를 만들어보면 이해가 될 것입니다.
 
