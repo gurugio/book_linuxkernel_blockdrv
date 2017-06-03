@@ -128,7 +128,11 @@ Therefore the disk should be ready to handle I/O before calling add_disk().
 
 bio가 뭐냐면 IO를 처리하는데 있어서 최소단위가 되는 구조체입니다. request 객체는 결국 여러개의 bio를 가지게됩니다. 왜 bio 처리를 먼저 만들어보냐면 IO의 최소단위이므로 커널이 IO를 처리하는 과정을 그대로 볼 수 있기 때문입니다. 나중에 request 단위로 처리하는걸 만들면 bio의 merge라는 등 더 복잡한 처리가 소개되니까 일단 가장 기본 단위부터 만들어보는게 이해하기 좋겠지요.
 
-
+I told you that driver created a queue of requests, so-called request-queue, and kernel sends I/O request via that queue.
+We will make a request later but in this chapter I will introduce a bio object first, because it's more simple and the most basic unit of I/O processing.
+As we see how kernel processes the bio object, we can understand the basic concepts of I/O processing of the kernel.
+A request consists of several bio objects.
+So we first need to understand the bio processing to understand the request processing.
 
 ### struct bio & struct bio_vec
 디스크 IO가 일어나려면 기본적으로 얼마만큼의 데이터를 어디에서 가져와야된다는 정보가 있어야합니다. 그 정보가 바로 struct bio 구조체로 표현됩니다.
