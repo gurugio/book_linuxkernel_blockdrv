@@ -124,10 +124,6 @@ Therefore the disk should be ready to handle I/O before calling add_disk().
 
 ## bio object
 
-드라이버가 request-queue를 만들고, 커널이 IO 요청을 request로 만들어서 큐를 통해서 전달한다고 말씀드렸지요. 그런데 이번 장에서 바로 이 request 객체를 처리하는걸 만들어보지는 않을겁니다. 그것보다 더 간단한 자료구조인 bio를 소개하고, bio를 기준으로 IO를 처리하는걸 구현해보겠습니다.
-
-bio가 뭐냐면 IO를 처리하는데 있어서 최소단위가 되는 구조체입니다. request 객체는 결국 여러개의 bio를 가지게됩니다. 왜 bio 처리를 먼저 만들어보냐면 IO의 최소단위이므로 커널이 IO를 처리하는 과정을 그대로 볼 수 있기 때문입니다. 나중에 request 단위로 처리하는걸 만들면 bio의 merge라는 등 더 복잡한 처리가 소개되니까 일단 가장 기본 단위부터 만들어보는게 이해하기 좋겠지요.
-
 I told you that driver created a queue of requests, so-called request-queue, and kernel sends I/O request via that queue.
 We will make a request later but in this chapter I will introduce a bio object first, because it's more simple and the most basic unit of I/O processing.
 As we see how kernel processes the bio object, we can understand the basic concepts of I/O processing of the kernel.
@@ -135,19 +131,43 @@ A request consists of several bio objects.
 So we first need to understand the bio processing to understand the request processing.
 
 ### struct bio & struct bio_vec
+
 디스크 IO가 일어나려면 기본적으로 얼마만큼의 데이터를 어디에서 가져와야된다는 정보가 있어야합니다. 그 정보가 바로 struct bio 구조체로 표현됩니다.
 
 그리고 섹터라는게 나옵니다. 바로 디스크 IO 최소단위입니다.  디스크에 한번에 쓰고 읽을 수 있는 단위가 바로 섹터입니다. 하드디스크를 상상해볼까요. 둥그런 플래터가 빙빙돌고 있습니다. 바로 그 플래터의 한 부분을 섹터라고 부르고, 크기는 512바이트입니다.
 
-https://ko.wikipedia.org/wiki/%ED%95%98%EB%93%9C_%EB%94%94%EC%8A%A4%ED%81%AC_%ED%94%8C%EB%9E%98%ED%84%B0
+The most essential information for disk IO is the location and size of the data.
+And they are represented by struct bio.
 
-디스크를 둥근 플래터로 생각하지말고 섹터의 배열이라고 생각하봅시다. 그럼 몇번째 섹터부터 몇개의 섹터를 읽고 쓸거냐라는게 왜 IO의 기준이 되는지 이해가 될겁니다. 물론 하드디스크냐 SSD냐 등등 섹터만 기준이 되는게 아닙니다. 헤더니 실린더니 하드디스크에서 어느 위치냐를 지정하는데는 더 복잡한 방법이 사용됩니다. 실제 장치 드라이버를 만들려면 장치의 기계적인 특성을 모두 알아야겠지만 우리는 가상의 장치만 생각하겠습니다. 이 장치는 섹터가 한줄로 길게 늘어선 모양이고 섹터의 배열로 이루어져있습니다.
+And the basic unit of disk IO is a sector.
+The hard disk can read/write sector by sector.
 
-사용자 어플을 생각해보세요. read()/write() 시스템 콜을 보면 파일의 어느부분부터 몇 바이트를 읽고 쓰겠다는 명령을 내립니다. 드라이버는 몇번 섹터부터 몇개의 섹터를 읽고 쓰라는 명령을 받습니다. 중간에 있는 커널의 블럭 레이어가 바로 파일의 위치, 크기를 섹터위치, 섹터 갯수로 변환해주는 일을 합니다. 드라이버는 결국 섹터만 생각하면 됩니다.
+Physically a hard disk is made of several platters.
+A small part of a platter is the sector and it's size is 512-byte.
 
-그리고 섹터 정보가 모여있는게 bio입니다. 
+https://en.wikipedia.org/wiki/Hard_disk_drive
+
+As a point of view of kernel, the hard disk is an array of sector.
+So the mybrd driver should inform kernel how many sectors, where the sectors are.
+And kernel passes the location and number of sectors to mybrd driver.
+If mybrd driver is for actual physical disk, it must have information about physical compinents of the disk and mapping table for sector and physical location on platters.
+But we don't have any physical disk and our purpose is also not to make a driver for a certain hard disk.
+Our purpose is understanding how the kernel processes the IO and how to make a generic block driver.
+A block driver is not only physical disk driver but also virtual disk driver such as RAID device.
+Therefore mybrd driver handles only sectors.
+
+You must've implemented some user application to read/write file on the disk.
+You didn't specify any information about sector when you call read()/write() and other system calls.
+You only specify a file, offset and size.
+The filesystem layer and block layer of kernel calculates the address and number of sectors with the information from user.
+And kernel passes only sector information to driver.
+The sector information is represented by struct bio.
+
+Following link show the structure of struct bio.
 
 http://www.makelinux.net/books/lkd2/ch13lev1sec3
+
+
 
 여기에 좋은 그림이 있네요. 하나의 bio에는 여러개의 bio_vec가 들어있고, 각 bio_vec에는 어떤 페이지의 어떤 위치에 몇 바이트라는 정보가 있습니다. 이 bio_vec이 세그먼트를 표현하는 구조체입니다.
 
