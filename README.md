@@ -2,7 +2,7 @@ gitbook: https://gurugio.gitbooks.io/linuxkernel_blockdriver/content/
 
 (On translation)
 
-# block device in Linux kernel v4.4
+# Multi-queue block device in Linux kernel v4.4
 
 Several years ago, a new concept was merged into the block layer of Linux kernel. Before that every single block device has one queue for IO handling. Every processes inserted an IO request into the queue and block device driver extract a request from the queue. Yes, one queue was shared for many processes and for many processors.
 
