@@ -132,10 +132,6 @@ So we first need to understand the bio processing to understand the request proc
 
 ### struct bio & struct bio_vec
 
-디스크 IO가 일어나려면 기본적으로 얼마만큼의 데이터를 어디에서 가져와야된다는 정보가 있어야합니다. 그 정보가 바로 struct bio 구조체로 표현됩니다.
-
-그리고 섹터라는게 나옵니다. 바로 디스크 IO 최소단위입니다.  디스크에 한번에 쓰고 읽을 수 있는 단위가 바로 섹터입니다. 하드디스크를 상상해볼까요. 둥그런 플래터가 빙빙돌고 있습니다. 바로 그 플래터의 한 부분을 섹터라고 부르고, 크기는 512바이트입니다.
-
 The most essential information for disk IO is the location and size of the data.
 And they are represented by struct bio.
 
