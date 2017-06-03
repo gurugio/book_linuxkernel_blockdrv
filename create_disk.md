@@ -100,9 +100,16 @@ Disk name is set to disk->disk_name.
 Disk size is set with set_capacity.
 The unit of the disk size is sector which is 512-bytes, so we need to divide the 4M with 512.
 
-fops필드가 있습니다. 바로 디스크의 장치 파일을 열고 사용할 때 호출될 함수입니다. 커널에서 struct block_device_operations의 정의를 찾아보면 read, write, open, close, ioctl 등 익숙한 이름들이 있습니다. 바로 어플리케이션에서 장치 파일을 가지고 read(), write(), open(), close(), ioctl() 등의 시스템 콜을 호출할 때 드라이버가 등록한 함수들이 호출되도록 만든 것입니다. mybrd는 /dev/mybrd 장치 파일을 만듭니다. 우리는 ioctl() 시스템 콜에 mybrd_ioctl()함수가 호출되도록 등록했으니, 나중에 장치 파일을 열고 ioctl()을 호출하는 어플을 만들어서 실험해보시기 바랍니다.
+The disk structure has fops field.
+You can see read, write, open, close and ioctl function pointers in the definition of struct block_device_operations.
+They are called when user calls read, write, open, close and ioctl system call.
+Our driver, mybrd, created /dev/mybrd device file.
+So if user opens /dev/mybrd file and calls ioctl system call, mybrd_ioctl function in the driver file is called.
+Please try to make a application to open mybrd device file and call ioctl().
+You will be able to find a message "start mybrd_ioctl" and "end mybrd_ioctl".
 
-커널의 콜 스택을 분석할때 dump_stack() 함수가 편리합니다. 현재까지의 콜 스택을 커널 메세지로 출력하는 함수입니다. mybrd_ioctl()함수에서 dump_stack()을 호출하면 어플의 시스템 콜이 어떻게 커널에서 처리되는지 파악하기 편하겠지요.
+dump_stack() function prints back-trace of the current function in the kernel log.
+So you can add dump_stack() in mybrd_ioctl() to see how a system call is handled in the kernel mode.
 
 gendisk객체를 만들었으면 커널에 새로운 디스크를 생성하라고 알려줘야합니다. 그게 바로 add_disk()함수입니다. 사실 request-queue를 만들긴 했지만, 커널에 드라이버가 만든 request-queue를 알려주는 함수는 없습니다. 바로 gendisk 객체에 request-queue를 등록하면 커널은 gendisk에 접근할 때마다 이 디스크가 사용할 request-queue가 뭔지 알게되는 것이지요. 따라서 블럭 장치의 가장 핵심 객체가 바로 gendisk이고, 이 핵심 객체를 커널이 사용하도록 등록하는게 add_disk()함수입니다.
 
