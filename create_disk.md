@@ -110,8 +110,6 @@ You will be able to find a message "start mybrd_ioctl" and "end mybrd_ioctl".
 dump_stack() function prints back-trace of the current function in the kernel log.
 So you can add dump_stack() in mybrd_ioctl() to see how a system call is handled in the kernel mode.
 
-gendisk객체를 만들었으면 커널에 새로운 디스크를 생성하라고 알려줘야합니다. 그게 바로 add_disk()함수입니다. 사실 request-queue를 만들긴 했지만, 커널에 드라이버가 만든 request-queue를 알려주는 함수는 없습니다. 바로 gendisk 객체에 request-queue를 등록하면 커널은 gendisk에 접근할 때마다 이 디스크가 사용할 request-queue가 뭔지 알게되는 것이지요. 따라서 블럭 장치의 가장 핵심 객체가 바로 gendisk이고, 이 핵심 객체를 커널이 사용하도록 등록하는게 add_disk()함수입니다.
-
 Now we created the gendisk object.
 Next we should inform the kernel about our gendisk object.
 The kernel gets the gendisk object and make device files, sysfs entry and so on.
@@ -120,18 +118,19 @@ We store a pointer of the request_queue in gendisk object and pass only gendisk 
 So gendisk object is the essential object in block driver and has almost every information about a disk.
 A function to pass the gendisk object is add_disk().
 
-add_disk()가 호출된 후에는 /dev/mybrd 파일이 생깁니다. /sys/block/mybrd 디렉토리도 생깁니다. 그리고 커널은 새로 디스크가 연결된걸 알고, 디스크를 읽어봅니다. add_disk()가 호출된 순간부터 디스크로 IO가 발생합니다. 그러니 add_disk()를 호출하기 전에 IO를 처리할 모든 준비가 끝나야겠지요.
-
 After adding the gendisk object with add_disk(), a device file /dev/mybrd and a sysfs directory /sys/block/mybrd are created.
 And kernel starts generating I/O to access the disk.
 Therefore the disk should be ready to handle I/O before calling add_disk().
 
-##bio 구조체
+## bio object
+
 드라이버가 request-queue를 만들고, 커널이 IO 요청을 request로 만들어서 큐를 통해서 전달한다고 말씀드렸지요. 그런데 이번 장에서 바로 이 request 객체를 처리하는걸 만들어보지는 않을겁니다. 그것보다 더 간단한 자료구조인 bio를 소개하고, bio를 기준으로 IO를 처리하는걸 구현해보겠습니다.
 
 bio가 뭐냐면 IO를 처리하는데 있어서 최소단위가 되는 구조체입니다. request 객체는 결국 여러개의 bio를 가지게됩니다. 왜 bio 처리를 먼저 만들어보냐면 IO의 최소단위이므로 커널이 IO를 처리하는 과정을 그대로 볼 수 있기 때문입니다. 나중에 request 단위로 처리하는걸 만들면 bio의 merge라는 등 더 복잡한 처리가 소개되니까 일단 가장 기본 단위부터 만들어보는게 이해하기 좋겠지요.
 
-###struct bio & struct bio_vec
+
+
+### struct bio & struct bio_vec
 디스크 IO가 일어나려면 기본적으로 얼마만큼의 데이터를 어디에서 가져와야된다는 정보가 있어야합니다. 그 정보가 바로 struct bio 구조체로 표현됩니다.
 
 그리고 섹터라는게 나옵니다. 바로 디스크 IO 최소단위입니다.  디스크에 한번에 쓰고 읽을 수 있는 단위가 바로 섹터입니다. 하드디스크를 상상해볼까요. 둥그런 플래터가 빙빙돌고 있습니다. 바로 그 플래터의 한 부분을 섹터라고 부르고, 크기는 512바이트입니다.
