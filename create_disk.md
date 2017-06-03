@@ -1,6 +1,6 @@
-# create a disk
+# Create a disk
 
-Let's start developing a block device.
+Finally we can start developing a block device.
 Until last chapter, we set up an environment to test our driver and created a skeleton code.
 In this chapter, we will created a virtual disk and check how data is transferred between kernel and the block driver.
 
@@ -90,10 +90,15 @@ So if you want to use the whole disk as it is, you can pass 1 to alloc_disk().
 You can see there is setting of the major and minor number when gendisk is initialized.
 So you can understand a device file is created now.
 The minor number is set as 111 in disk->first_minor.
-So later we will check the minor number of the device file.
+Soon we will check the minor number of the device file.
 It must be 111.
+If we pass 2 to alloc_disk() and set disk->first_minor as 111, there would be two device files with minor numbers 111 and 112.
+You can change the source file and test it.
 
-이 디스크에서 사용할 request-queue가 방금 우리가 생성한 rq라는 것을 설정합니다. 그림고 디스크의 이름과 크기를 지정합니다. 디스크의 크기는 섹터 단위입니다. 한 섹터는 512바이트이므로 바이트 단위 숫자를 512로 나눠서 지정합니다.
+disk->queue is set to request-queue we just created with blk_alloc_queue_node().
+Disk name is set to disk->disk_name.
+Disk size is set with set_capacity.
+The unit of the disk size is sector which is 512-bytes, so we need to divide the 4M with 512.
 
 fops필드가 있습니다. 바로 디스크의 장치 파일을 열고 사용할 때 호출될 함수입니다. 커널에서 struct block_device_operations의 정의를 찾아보면 read, write, open, close, ioctl 등 익숙한 이름들이 있습니다. 바로 어플리케이션에서 장치 파일을 가지고 read(), write(), open(), close(), ioctl() 등의 시스템 콜을 호출할 때 드라이버가 등록한 함수들이 호출되도록 만든 것입니다. mybrd는 /dev/mybrd 장치 파일을 만듭니다. 우리는 ioctl() 시스템 콜에 mybrd_ioctl()함수가 호출되도록 등록했으니, 나중에 장치 파일을 열고 ioctl()을 호출하는 어플을 만들어서 실험해보시기 바랍니다.
 
