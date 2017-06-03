@@ -78,11 +78,20 @@ In brief, the request has all information to read&write data between memory and 
 I'll explain mybrd_make_request_fn() soon.
 You can understand the request in detail then.
 
-####gendisk object
+#### gendisk object
 
-request-queue다음에는 gendisk라는 객체를 만듭니다. gendisk는 이름 그대로 디스크를 표현하는 객체입니다. 마찬가지로 전용 할당 함수 alloc_disk()가 있습니다. alloc_disk()의 인자는 1인데 1개의 디스크를 만든다는게 아니라 디스크에 최대 1개의 파티션이 있다는 것입니다. 그냥 디스크를 파티션으로 나누는게 아닐때 1로 지정합니다.
+In previous section, I've made request_queue object.
+Next step is making gendisk object.
+The gendisk object represents a disk and has all information for the disk management.
+And gendisk object must be allocated by alloc_disk() function.
+The argument of alloc_disk() is 1 that means the allocated disk has one partition.
+So if you want to use the whole disk as it is, you can pass 1 to alloc_disk().
 
-코드를 보면 디스크의 major number, minor number를 설정합니다. 왜냐면 이 디스크를 위한 장치 파일이 생성되기 때문입니다. first_minor를 111로 설정했습니다. 나중에 실험해보면 바로 장치 파일의 minor number가 111인걸 확인할 수 있습니다. 
+You can see there is setting of the major and minor number when gendisk is initialized.
+So you can understand a device file is created now.
+The minor number is set as 111 in disk->first_minor.
+So later we will check the minor number of the device file.
+It must be 111.
 
 이 디스크에서 사용할 request-queue가 방금 우리가 생성한 rq라는 것을 설정합니다. 그림고 디스크의 이름과 크기를 지정합니다. 디스크의 크기는 섹터 단위입니다. 한 섹터는 512바이트이므로 바이트 단위 숫자를 512로 나눠서 지정합니다.
 
