@@ -187,8 +187,6 @@ We can get each bio_vec bio_for_each_segment and get where data is in a page.
 * bvec.bv_page: a page including data
 * bvec.bv_offset: an offset where data begins inside-of the page
 
-우리는 그냥 bio_vec의 정보만 출력했지만 사실은 뭐가 필요할까요? 바로 여기가 DMA 동작을 실행해야하는 부분입니다. DMA는 페이지 단위로 실행됩니다. 그래서 bio 구조체가 페이지 정보들을 가지고 있는 것입니다. 하나의 bio가 하나의 scatter-gatter DMA가 됩니다.
-
 Current driver code only prints the information of each bio_vec.
 But what should actual driver do in bio_for_each_segment() loop?
 It usually does DMA transfer between disk and memory.
@@ -203,8 +201,6 @@ That is done by bio_endio() function.
 
 Next is updating statistics of the disk with generic_start/end_io_acct() functions.
 There are several files for statistics in sysfs of each disk, for instance /sys/block/mybrd/stat file.
-
-마지막으로 BLK_QC_T_NONE을 반환합니다. 그냥 아무 문제 없었다는걸 알려주는 것입니다. 커널이 mybrd_make_request_fn을 호출했을테니 커널에게 문제 없음을 알려주는 것이지요.
 
 The last is returning BLK_QC_T_NONE value.
 Kernel calls mybrd_make_request_fn() function, so it informs kernel that there is no error.
