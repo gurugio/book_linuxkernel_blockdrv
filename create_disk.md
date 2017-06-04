@@ -47,7 +47,7 @@ Let's skip the detail and just use the code as it is.
 Please note one thing.
 blk_queue_make_request() creates a connection between request_queue object and mybrd_make_request_fn() function.
 Every queue has a pair of producer and consumer which add data in the queue and extract data from the queue, respectively.
-Can you guess where the producer and consumer of request_queue are?
+Can you guess what the producer and consumer of request_queue are?
 Kernel already has both of the producer and consumer.
 Because they are common for all block device, kernel developers implements the generic framework to handle request_queue for device driver developers.
 (One of kernel developer's job is making a common framework for device drivers.
@@ -63,6 +63,10 @@ You will be welcomed.)
 
 blk_queue_make_request() function introduces mybrd_queue and mybrd_make_request_fn() to kernel.
 Then kernel can add a request into mybrd_queue and extract a request and pass it to mybrd_make_request_fn() function.
+(NOTE. You should not understand what kernel does and what driver should do at the moment.
+In this chaper, please focus only on driver.
+Please understand what driver should do.
+In later chapters, we will read the block layer code of kernel and understand how kernel use the queue of the driver and how kernel pass the request to the request-handler of the driver.)
 
 There is a pair of functions to create and destroy the request_queue: blk_alloc_queue_node() and blk_cleanup_queue.
 NEVER use other memory allocation functions like kmalloc.
@@ -122,6 +126,10 @@ After adding the gendisk object with add_disk(), a device file /dev/mybrd and a 
 And kernel starts generating I/O to access the disk.
 Therefore the disk should be ready to handle I/O before calling add_disk().
 
+# IO processing
+
+Let's read mybrd_make_request_fn() to understand what a driver should do for IO processing.
+
 ## bio object
 
 I told you that driver created a queue of requests, so-called request-queue, and kernel sends I/O request via that queue.
@@ -165,26 +173,45 @@ http://www.makelinux.net/books/lkd2/ch13lev1sec3
 
 One bio object consists of several bio_vec that is representation of a segment.
 A segment indicates a page that includes data.
+Each bio_vec can have maximum 8 sectors because it should exist inside a page.
 
-It's a little bit confusing. But the code is simple. We need only three code to handle sectors:
-
-* Start number of the sectors: bio->bi_iter.bi_sector
+It's a little bit confusing. But the code is simple. We need only information in the bio:
+* number of the first sector: bio->bi_iter.bi_sector
 * how many sectors: bio_sectors(bio)
 * read or write: bio_rw(bio)
 
-당연히 몇개의 섹터가 될지 모르지만 하나의 페이지 4096바이트보다 클 수 있겠지요? 그러니 bio_for_each_segment 매크로를 써서 각 bio_vec을 하나씩 꺼내오면 됩니다. 그러면 데이터를 읽고 써야할 페이지와 페이지 내부의 offset, 길이 정보를 알 수 있습니다. 설명도 깊고 많은 개념들이 나타나지만 코드로 보면 정작 중요한건 몇개 안된다는걸 알 수 있으실겁니다. 데이터 방향, 크기를 어떻게 표현하느냐입니다.
+We don't need to check each bio_vec objects in bio object.
+Kernel developers already made an macro, bio_for_each_segment, to extract the bio_vec one by one from bio.
+We can get each bio_vec bio_for_each_segment and get where data is in a page.
+* bvec.bv_len: data size
+* bvec.bv_page: a page including data
+* bvec.bv_offset: an offset where data begins inside-of the page
 
 우리는 그냥 bio_vec의 정보만 출력했지만 사실은 뭐가 필요할까요? 바로 여기가 DMA 동작을 실행해야하는 부분입니다. DMA는 페이지 단위로 실행됩니다. 그래서 bio 구조체가 페이지 정보들을 가지고 있는 것입니다. 하나의 bio가 하나의 scatter-gatter DMA가 됩니다.
 
-어쨌든 bio를 분석하면 어떤 페이지에 얼마만큼 읽기/쓰기를 해야하는지를 알 수 있습니다. 그리고 IO가 끝나면 해당 bio를 폐기처분해야합니다. bio객체도 어딘가에서 할당했을거니 당연히 해지가 필요하겠지요. 그런 일을 하는 함수가 bio_endio()입니다.
+Current driver code only prints the information of each bio_vec.
+But what should actual driver do in bio_for_each_segment() loop?
+It usually does DMA transfer between disk and memory.
+And DMA transfer is done page by page.
+That's why bio_vec has information about page.
+One bio can be passed to the scatter-gatter DMA transfer.
 
-그리고 이 장치가 얼마만큼 읽기/쓰기를 했는지 등의 통계 정보를 갱신하는게 generic_start/end_io_acct()입니다. 통계 정보는 커널을 부팅해서 확인해보겠습니다.
+Nevertheless actual data transfer is done in bio_for_each_segment() loop.
+And next step is finishing the bio object.
+It would be allocated somewhere, so it should be freed.
+That is done by bio_endio() function.
+
+Next is updating statistics of the disk with generic_start/end_io_acct() functions.
+There are several files for statistics in sysfs of each disk, for instance /sys/block/mybrd/stat file.
 
 마지막으로 BLK_QC_T_NONE을 반환합니다. 그냥 아무 문제 없었다는걸 알려주는 것입니다. 커널이 mybrd_make_request_fn을 호출했을테니 커널에게 문제 없음을 알려주는 것이지요.
 
-더 자세한 설명은 https://www.kernel.org/doc/Documentation/block/biodoc.txt 를 참고하세요.
+The last is returning BLK_QC_T_NONE value.
+Kernel calls mybrd_make_request_fn() function, so it informs kernel that there is no error.
 
-##bio 발생 실험
+You can find more detail information in kernel documentation: https://www.kernel.org/doc/Documentation/block/biodoc.txt
+
+# test mybrd
 
 ```
 [    0.499199] 
