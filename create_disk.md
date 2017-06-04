@@ -163,15 +163,14 @@ Following link show the structure of struct bio.
 
 http://www.makelinux.net/books/lkd2/ch13lev1sec3
 
+One bio object consists of several bio_vec that is representation of a segment.
+A segment indicates a page that includes data.
 
+It's a little bit confusing. But the code is simple. We need only three code to handle sectors:
 
-여기에 좋은 그림이 있네요. 하나의 bio에는 여러개의 bio_vec가 들어있고, 각 bio_vec에는 어떤 페이지의 어떤 위치에 몇 바이트라는 정보가 있습니다. 이 bio_vec이 세그먼트를 표현하는 구조체입니다.
-
-세그먼트니 섹터니 bio니 알아야될 개념이 많아지고 어지러워집니다. 그런데 코드를 보면 간단합니다. 복잡하게 생각할 것 없이 바로 코드를 보면서 이해하시면 됩니다.
-
-* 몇번 섹터부터 - bio->bi_iter.bi_sector
-* 몇개의 섹터를 - bio_sectors(bio)
-* 읽을거냐 쓸거냐 - bio_rw(bio)
+* Start number of the sectors: bio->bi_iter.bi_sector
+* how many sectors: bio_sectors(bio)
+* read or write: bio_rw(bio)
 
 당연히 몇개의 섹터가 될지 모르지만 하나의 페이지 4096바이트보다 클 수 있겠지요? 그러니 bio_for_each_segment 매크로를 써서 각 bio_vec을 하나씩 꺼내오면 됩니다. 그러면 데이터를 읽고 써야할 페이지와 페이지 내부의 offset, 길이 정보를 알 수 있습니다. 설명도 깊고 많은 개념들이 나타나지만 코드로 보면 정작 중요한건 몇개 안된다는걸 알 수 있으실겁니다. 데이터 방향, 크기를 어떻게 표현하느냐입니다.
 
