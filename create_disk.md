@@ -133,17 +133,17 @@ So we first need to understand the bio processing to understand the request proc
 ### struct bio & struct bio_vec
 
 The most essential information for disk IO is the location and size of the data.
-And they are represented by struct bio.
+And the basic unit of disk IO is a sector, so the hard disk can read/write sector by sector.
+So struct bio is a representation of the location and the number of sectors.
 
-And the basic unit of disk IO is a sector.
-The hard disk can read/write sector by sector.
-
-Physically a hard disk is made of several platters.
-A small part of a platter is the sector and it's size is 512-byte.
+Let's first look into what is disk briefly.
 
 https://en.wikipedia.org/wiki/Hard_disk_drive
 
-As a point of view of kernel, the hard disk is an array of sector.
+Physically a hard disk is made of several platters.
+A platter consists of 512-byte sectors.
+
+In kernel's a point of view, the hard disk is an array of sector.
 So the mybrd driver should inform kernel how many sectors, where the sectors are.
 And kernel passes the location and number of sectors to mybrd driver.
 If mybrd driver is for actual physical disk, it must have information about physical compinents of the disk and mapping table for sector and physical location on platters.
