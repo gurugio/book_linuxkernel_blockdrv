@@ -207,7 +207,7 @@ Kernel calls mybrd_make_request_fn() function, so it informs kernel that there i
 
 You can find more detail information in kernel documentation: https://www.kernel.org/doc/Documentation/block/biodoc.txt
 
-# test mybrd
+# test mybrd driver
 
 ```
 [    0.499199] 
@@ -240,9 +240,12 @@ You can find more detail information in kernel documentation: https://www.kernel
 [    0.510540] mybrd: end mybrd_alloc
 [    0.510801] mybrd: global-mybrd=ffff8800065438c0
 ```
-커널로부터 bio 정보가 잘 전달되고있는지 실험을 해보겠습니다.
+
+Let's check the bio that driver receives from kernel.
 
 커널을 부팅했더니 부팅 메세지에 위와같이 메시지가 나타납니다. mybrd_init()이 제대로 호출된걸 확인할 수 있고, 그 다음에 mybrd_alloc()에서 출력한 메세지들도 보이네요. 그리고 mybrd_make_request_fn()가 호출된 것도 보입니다. mybrd_make_request_fn()에서는 분명 bio의 정보들을 출력해야되는데 이상하게 IO 에러를 나타내는 메세지가 출력됩니다. 이게 뭘까요?
+
+We have built kernel with empty driver in previous chapter. 
 
 이전에 말씀드렸는데 add_disk()가 호출되서 커널이 gendisk를 인식한 즉시 해당 디스크에 IO가 발생할 수 있습니다. 우리 드라이버는 add_disk()를 호출한 다음 global_mybrd에 새로 할당된 mybrd_device 객체의 포인터를 저장합니다. 그말은 global_mybrd = mybrd_allod() 코드가 실행되기전에 디스크로 IO가 발생했다는 것입니다. 그리고 mybrd_make_request_fn()에서는 if(mybrd != global_mybrd) 코드로 분기해서 bio_io_error()를 호출합니다. 커널에게 해당 bio를 처리하다가 에러가 발생했다고 알려주는 것입니다. 그러니 커널은 IO가 실패했다고 메세지를 출력하게됩니다.
 
