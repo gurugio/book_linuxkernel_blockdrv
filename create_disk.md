@@ -297,7 +297,6 @@ iostats                 nomerges                write_same_max_bytes
 / # cat /sys/block/mybrd/queue/max_segment_size 
 65536
 ```
-다양한 파일들이 있습니다. 이 파일들의 자세한 정보는 커널 소스 내부에 있는 문서에서 확인할 수 있습니다. 커널 소스에 있는 Documentation 디렉토리가 커널 자체를 설명하는 다양한 문서들이 저장된 디렉토리입니다. 이중에서 Documentation/block 을 보면 블럭 장치에 대한 설명들이 있고, queue에 대한 설명은 queue-sysfs.txt파일에 있습니다. 다음 링크를 열어보면 웹으로도 볼수있습니다.
 
 There are many files that show the properties of the queue.
 You can find the detail of each file in the kernel document directory.
