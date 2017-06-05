@@ -245,13 +245,25 @@ Let's check the bio that driver receives from kernel.
 
 커널을 부팅했더니 부팅 메세지에 위와같이 메시지가 나타납니다. mybrd_init()이 제대로 호출된걸 확인할 수 있고, 그 다음에 mybrd_alloc()에서 출력한 메세지들도 보이네요. 그리고 mybrd_make_request_fn()가 호출된 것도 보입니다. mybrd_make_request_fn()에서는 분명 bio의 정보들을 출력해야되는데 이상하게 IO 에러를 나타내는 메세지가 출력됩니다. 이게 뭘까요?
 
-We have built kernel with empty driver in previous chapter. 
+We have built kernel with empty driver in previous chapter.
+Now let's build and run kernel again with new driver source.
+We can see some messages from mybrd_init() and mybrd_alloc().
+And there are many messages from mybrd_make_request_fn().
+I said that mybrd_make_request_fn() will print the information of bio object but there are only I/O errors: "Buffer I/O error on dev mybrd, logical block 0, async page read".
+Why?
 
 이전에 말씀드렸는데 add_disk()가 호출되서 커널이 gendisk를 인식한 즉시 해당 디스크에 IO가 발생할 수 있습니다. 우리 드라이버는 add_disk()를 호출한 다음 global_mybrd에 새로 할당된 mybrd_device 객체의 포인터를 저장합니다. 그말은 global_mybrd = mybrd_allod() 코드가 실행되기전에 디스크로 IO가 발생했다는 것입니다. 그리고 mybrd_make_request_fn()에서는 if(mybrd != global_mybrd) 코드로 분기해서 bio_io_error()를 호출합니다. 커널에게 해당 bio를 처리하다가 에러가 발생했다고 알려주는 것입니다. 그러니 커널은 IO가 실패했다고 메세지를 출력하게됩니다.
 
-어쨌든 부팅이 완료됐으니 몇가지 실험을 해보겠습니다.
+As I said before, I/O will be generated just after add_disk() passes gendisk object to kernel.
+The mybrd driver allocates mybrd_device object with mybrd_alloc() and stores it into global_mybrd variable.
+So add_disk() is called first and next global_mybrd variable is set.
+mybrd_make_request_fn() compares mybrd and global_mybrd and calls bio_io_error() if mybrd is not global_mybrd: ``if(mybrd != global_mybrd)`` to inform kernel that I/O processing is failed.
+There is a time gap between add_disk() and set global_mybrd.
+Some I/Os generated between that time gap will be failed because global_mybrd is not set.
 
-드라이버가 제대로 등록됐는지를 알아보기 위해 장치 파일을 확인하고, /sys/block/mybrd 디렉토리도 열어보겠습니다.
+Nevertheless we confirm that driver is loaded and starts I/O processing.
+Let's check the device file and sysfs entris in /sys/block/mybrd.
+
 ```
 / # ls -l /dev/mybrd
 brw-rw----    1 0        0         253, 111 Nov  3 14:07 /dev/mybrd
@@ -264,7 +276,13 @@ discard_alignment  queue              slaves
 ```
 여기서 가장 중요한 파일은 stat파일입니다. 이 장치에 얼마만큼의 IO가 발생했는지를 확인하는 것입니다. size 파일도 있는데요 디스크의 크기가 저장된 파일입니다. cat /sys/block/mybrd/size 명령으로 출력해보세요. 그 외에 다른 파일들도 한번 출력해보세요.
 
-그리고 또 열어볼게 queue 디렉토리입니다. 바로 request-queue의 정보를 가지고 있습니다.
+You can check the contents of each file with cat command.
+The stat file shows how many IO are generated.
+The size file shows the size of file.
+And check other files with cat command.
+
+There is a queue directory that has the information of request_queue.
+
 ```
 / # ls /sys/block/mybrd/queue/
 add_random              logical_block_size      nr_requests
