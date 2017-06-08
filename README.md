@@ -35,7 +35,7 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 (I'm working on tranlsation)
 * [prepare](environment.md) - done
 * [skeleton of mybrd](mybrd_skeleton.md) - done
-* [disk](create_disk.md)
+* [disk](create_disk.md) - done
 * [ramdisk](create_ramdisk.md)
 * [request-mode](request-mode.md)
 * [multiqueue-mode](multiqueue-mode.md)
