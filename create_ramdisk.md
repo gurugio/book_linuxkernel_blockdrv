@@ -15,19 +15,21 @@ source file: https://github.com/gurugio/mybrd/blob/ch03-ramdisk/mybrd.c
 
 reference: https://lwn.net/Articles/175432/
 
-I'll describe a radix tree in Linux kernel, not general radix tree data structure in the text book.
+Radix tree is used for page handling in Linux kernel. A driver allocates a page and adds into the radix tree with key value.
+Key value could be any number such as page number.
+So we will use the number of sector stored in the page.
+When we need to read a sector, we will pass the number of sector to the radix tree and get a page which has data of the sector.
 
+The detail for implementation of the radix tree is beyond of this document.
+Please read "Understanding the Linux kernel" book that describe the implementation of the radix tree in detail.
+We will not care about the internal of the radix tree implementation, but only use it.
 
+### struct radix_tree_root
 
-일반적인 radix tree 자료구조가 아니라 리눅스에서 구현된 radix tree를 기준으로 설명하겠습니다.
+``struct radix_tree_root`` describes the root of the radix tree.
+That is initialized with INIT_RADIX_TREE macro.
 
-radix tree는 페이지를 저장하는 자료구조입니다. 드라이버에서 페이지를 할당하고, 이 페이지를 키 값을 지정해서 트리에 저장합니다. 그리고 나중에 키 값을 이용해서 다시 해당 페이지를 찾는 것이지요. 구현이나 좀더 다양한 활용법은 참고 링크를 확인하시고, 우리는 그냥 페이지를 저장했다가 찾는 간단한 기능만 사용하겠습니다.
-
-###struct radix_tree_root
-
-트리의 루트를 표현하는 구조체입니다. INIT_RADIX_TREE 매크로로 초기화합니다.
-
-###radix_tree_preload()/_end() & radix_tree_insert()
+### radix_tree_preload()/_end() & radix_tree_insert()
 
 radix-tree에 페이지를 넣는게 radix_tree_inset() 함수입니다. 사용법은 간단합니다. 루트 노트의 주소와 페이지의 키값, 페이지 포인터만 지정하면 됩니다. 키 값을 뭘로 정할지는 드라이버가 알아서하면 됩니다. 잠시후 보겠지만 우리는 섹터 번호를 키 값으로 사용합니다. 왜냐면 디스크에서 유니크한 값이 섹터 번호니까요.
 
