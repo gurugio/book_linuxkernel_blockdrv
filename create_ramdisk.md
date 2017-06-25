@@ -31,15 +31,35 @@ That is initialized with INIT_RADIX_TREE macro.
 
 ### radix_tree_preload()/_end() & radix_tree_insert()
 
-radix-tree에 페이지를 넣는게 radix_tree_inset() 함수입니다. 사용법은 간단합니다. 루트 노트의 주소와 페이지의 키값, 페이지 포인터만 지정하면 됩니다. 키 값을 뭘로 정할지는 드라이버가 알아서하면 됩니다. 잠시후 보겠지만 우리는 섹터 번호를 키 값으로 사용합니다. 왜냐면 디스크에서 유니크한 값이 섹터 번호니까요.
+We can add a page into the radix tree via radix_tree_insert() function.
+It's simple to use, only pass the pointer to the root, key value and pointer to the page to that function.
+Any unique value can be used for the key value.
+We will use the sector number for the key value because the sector number is unique in a disk.
 
-그런데 radix_tree_preload()라는게 있습니다. 꼭 필요한건 아니지만 많이 사용되는 함수입니다. 참고 문서를 보시면 radix_tree_insert()가 실패하면 안되는 상황에서 사용한다고 설명하고 있습니다. 트리에 어떤 데이터를 넣으려면 트리 노드를 표현하는 객체를 만들어야됩니다. 따라서 메모리 할당을 해야합니다. radix_tree_preload()는 메모리 할당을 미리 해놓는 것입니다. 트리란건 사실 데이터와 키 값을 저장하는 자료구조중에 속도가 필요할 때 쓰는 것입니다. 그런데 트리에 데이터를 넣을때마다 메모리 할당을 한다면 속도도 느려지고, 트리에 대한 동기화 문제도 복잡해집니다. 메모리 할당은 메모리가 부족한 경우 프로세스를 잠들게 할 수 있습니다. 만약 락이 걸린 상태에서 잠든다면 데드락의 가능성도 생기고 문제가 많아집니다.
+One more thing we need to notice is calling radix_tree_repload() and radix_tree_reload_end() function.
+It's not mandatory but common to call them.
+radix_tree_preload function helps radix_tree_insert succeed.
+How? We need to allocate memory for the tree node when we add a page into the radix tree.
+The tree node usually has the pointer to page, key value and so on.
+radix_tree_preload() allocates several tree nodes in advance, so that radix_tree_insert() does not fail to allocate memory.
+The reason we use the tree is that the tree is fast.
+But if we should allocate a node whenever we add a node into the tree, it would be much slower.
+So radix_tree_preload() allocates tree nodes in advance and stores the nodes at per-cpu space.
+So allocation the tree node in radix_tree_insert() cannot fail.
 
-그래서 preload를 합니다. 만약 preload가 실패한다면 메모리가 부족한 상황이므로 트리에 접근을 안하고 그러면 동기화 문제가 없어집니다. preload가 성공한다면 메모리 부족으로 실패할 일은 없으니 크리티컬 섹션에서 프로세스가 잠들 일도 없습니다.
+If radix_tree_preload fails, we don't access the radix tree because there are very less memory.
+We don't need to try to lock the radix tree.
+If we would lock the radix tree and fail to allocate memory, the kernel can make the process sleep.
+If a process hold the lock and sleep, it could generate deadlock.
+It's critical to system.
 
-그래서 결론은 radix_tree_preload()를 호출한 후에 성공하면 radix_tree_insert()를 호출하도록 구현한다는 것입니다. radix_tree_insert() 다음에는 radix_tree_preload_end()를 반드시 호출해야합니다. 왜인지는 커널 소스를 보시면 아시게 됩니다.
+So conclusion is calling radix_tree_preload() before calling radix_tree_insert().
+And radix_tree_preload_end() should be called after radix_tree_insert()..
 
-참고로 커널에서 뭔가 이거다음에 반드시 이거를 호출해라라고 규정할 때가 자주 있습니다. 이런건 반드시 지켜야합니다. 대부분 동기화와 관련되있어서 문제가 발생할 경우 디버깅하기가 어렵습니다. 그리고 커널 문서에 그런 사항들이 모두 기록된게 아닙니다. 왜냐면 코드가 자주 바뀌는 부분은 문서 자체를 아예 안만드니까요. 주석으로 설명하는 것도 한계가 있습니다. 가장 좋은 방법은 다른 드라이버 코드를 참고하는 것입니다. 소스 태깅 툴로 radix_tree_preload()를 호출하는 다른 코드들을 확인해보세요. 어떤 커널 함수를 사용할 때는 그 함수를 이미 사용하는 다른 코드를 찾아보는게 가장 좋은 레퍼런스가 됩니다. 문서나 주석은 바뀐 코드를 반영하지 않을 수 있지만, 코드 자체는 항상 옳으니까요.
+The best way to check how a function is used is checking other code.
+Please find other code which calls radix_tree_preload().
+Whenever you find a new kernel API and are not sure how to use it, you need to check other code.
+Document and comment could be out of date but code is always the latest and never be expired.
 
 ###radix_tree_lookup()
 
