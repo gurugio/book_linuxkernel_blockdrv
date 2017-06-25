@@ -1,16 +1,23 @@
-# 램디스크 구현
+# Ramdisk
 
-이전장에서는 bio가 뭔지만 확인했습니다. 가상의 램디스크를 만들어서 bio가 어떻게 IO처리에 이용되는지 알아보겠습니다. 램디스크는 어플이 저장한 데이터를 램에 저장해놨다가, 다시 읽혀질 때 저장된 값을 반환하는 장치입니다. 하드디스크를 메모리로 흉내냈다고 보면 됩니다. 재부팅되면 데이터가 사라지는 것만 다릅니다.
+In previous chapter, we understood what bio is.
+In this chapter, we will make a ramdisk and look into how bio for the ramdisk is processed.
+Ramdisk is, as the name is, a kind of disk that stores data in memory(RAM).
+You can think it as a mimic of the hard-disk, but we will lose data after reboot.
 
-참고로 /drivers/block/brd.c 파일을 보면 이미 램디스크 드라이버가 있습니다. 이 램디스크를 따라만든다고 생각하시면 됩니다.
+Following link is a complete source of the ramdisk driver.
 
-소스: https://github.com/gurugio/mybrd/blob/ch03-ramdisk/mybrd.c
+source file: https://github.com/gurugio/mybrd/blob/ch03-ramdisk/mybrd.c
 
-##radix tree를 이용해서 페이지 저장하기
+## page management with the radix tree
 
-###radix tree 자료구조 소개
+### introduction to radix tree data structure
 
-참고: https://lwn.net/Articles/175432/
+reference: https://lwn.net/Articles/175432/
+
+I'll describe a radix tree in Linux kernel, not general radix tree data structure in the text book.
+
+
 
 일반적인 radix tree 자료구조가 아니라 리눅스에서 구현된 radix tree를 기준으로 설명하겠습니다.
 
