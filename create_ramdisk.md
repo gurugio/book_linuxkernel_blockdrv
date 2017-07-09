@@ -61,11 +61,14 @@ Please find other code which calls radix_tree_preload().
 Whenever you find a new kernel API and are not sure how to use it, you need to check other code.
 Document and comment could be out of date but code is always the latest and never be expired.
 
-###radix_tree_lookup()
+### radix_tree_lookup()
 
 트리에서 특정 키 값을 갖는 페이지를 찾는 함수입니다. 사용법도 간단합니다. 루트와 키 값만 전달하면 페이지 포인터를 반환합니다.
+It finds a page with the specific key in the tree.
+It's easy to use.
+It takes the pointer of a root node and key value and returns the pointer to the page.
 
-###mybrd_lookup_page()
+### mybrd_lookup_page()
 
 모든 IO는 섹터단위로 이루어집니다. 몇번 섹터에서 몇개의 섹터를 읽기/쓰기가 IO가 동작하는 방식입니다. 따라서 radix-tree의 키 값도 섹터가 되야합니다.
 
