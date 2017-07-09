@@ -63,7 +63,6 @@ Document and comment could be out of date but code is always the latest and neve
 
 ### radix_tree_lookup()
 
-트리에서 특정 키 값을 갖는 페이지를 찾는 함수입니다. 사용법도 간단합니다. 루트와 키 값만 전달하면 페이지 포인터를 반환합니다.
 It finds a page with the specific key in the tree.
 It's easy to use.
 It takes the pointer of a root node and key value and returns the pointer to the page.
@@ -72,7 +71,11 @@ It takes the pointer of a root node and key value and returns the pointer to the
 
 모든 IO는 섹터단위로 이루어집니다. 몇번 섹터에서 몇개의 섹터를 읽기/쓰기가 IO가 동작하는 방식입니다. 따라서 radix-tree의 키 값도 섹터가 되야합니다.
 
+All IOs are handled sector by sector. Each IO has information about which and how many sectors it should be read/write.
+Therefore the key value for the radix-tree should be sector number.
+
 mybrd_lookup_page()는 트리에서 특정 섹터의 데이터를 가지고 있는 페이지를 찾는 함수입니다. 함수 인자로 섹터 번호를 지정하면 그 섹터를 포함하고 있는 페이지를 반환합니다.
+
 
 함수 내부를 보겠습니다. 먼저 rcu_read_lock()이 보입니다. RCU lock에 대해서는 다음 문서로 설명을 대신하겠습니다.
 
