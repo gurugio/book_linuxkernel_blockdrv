@@ -1,6 +1,6 @@
 # Ramdisk
 
-In previous chapter, we understood what bio is.
+In previous chapter, we found out what bio is.
 In this chapter, we will make a ramdisk and look into how bio for the ramdisk is processed.
 Ramdisk is, as the name is, a kind of disk that stores data in memory(RAM).
 You can think it as a mimic of the hard-disk, but we will lose data after reboot.
