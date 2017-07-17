@@ -69,15 +69,16 @@ It takes the pointer of a root node and key value and returns the pointer to the
 
 ### mybrd_lookup_page()
 
-모든 IO는 섹터단위로 이루어집니다. 몇번 섹터에서 몇개의 섹터를 읽기/쓰기가 IO가 동작하는 방식입니다. 따라서 radix-tree의 키 값도 섹터가 되야합니다.
-
 All IOs are handled sector by sector. Each IO has information about which and how many sectors it should be read/write.
 Therefore the key value for the radix-tree should be sector number.
 
-mybrd_lookup_page()는 트리에서 특정 섹터의 데이터를 가지고 있는 페이지를 찾는 함수입니다. 함수 인자로 섹터 번호를 지정하면 그 섹터를 포함하고 있는 페이지를 반환합니다.
+mybrd_lookup_page() function searches the tree and finds a page including the specified sector.
+It takes the sector number as an argument and returns the pointer to the page.
 
-
-함수 내부를 보겠습니다. 먼저 rcu_read_lock()이 보입니다. RCU lock에 대해서는 다음 문서로 설명을 대신하겠습니다.
+Let's check the implementation.
+The first code is calling rcu_read_lock().
+Describing rcu functions is far beyond this document.
+Please read following document if you want to know rcu in detail.
 
 https://lwn.net/Articles/262464/
 
@@ -88,6 +89,11 @@ rcu_read_lock()의 핵심은 트리를 읽는 쓰레드는 배타적으로 실�
 그 다음은 섹터 번호를 가지고 키 값을 만드는 것입니다. 하나의 페이지에는 4096바이트이고 섹터는 512바이트이므로 하나의 페이지에 총 8개의 섹터가 저장될 수 있습니다. 그러므로 우리는 각 페이지에 시작부분에 저장되는 섹터의 번호를 이용해서 키값을 생성하겠습니다.
 
 먼저 예로 몇개의 (섹터 키) 값의 쌍을 한번 계산해보겠습니다.
+
+rcu_read_lock() allows multi-thread to access the tree concurrently.
+
+
+
 
 ```
 0 0
