@@ -117,20 +117,31 @@ It means that any data is not written to the specified sector yet.
 ### mybrd_insert_page()
 
 트리에 페이지를 추가합니다. 가장 먼저 이미 해당 섹터가 트리에 있는지를 확인합니다. 트리에 찾고자하는 페이지가 없다면 먼저 페이지를 할당합니다. 
-
-페이지 할당에서 중요한 사항이 바로 할당 플래그입니다. 우리는 디스크 IO를 처리하는 드라이버를 만들고있으므로 GFP_NOIO 플래그를 사용해야합니다. 그 이유는 김민찬님의 강좌에서 잘 설명하고 있습니다.
-
-https://www.linux.co.kr/home2/board/subbs/board.php?bo_table=lecture&wr_id=1641
-
-GFP_NOIO와 GFP_NOFS는 현 재 메모리가 모자라 회수를 해야 되는 상황인데 함수를 호출한 context가 block I/O code라던가 파일시스템 코드 일경우 사용되게 된다. 예를 들면, block I/O의 코드 중에 buffer_head를 할당하는 함수가 있다. 그 경우, 커널이 buffer_head를 할당하려다가 메모리가 모자라다는 것을 알아 차렸다면 페이지 회수 알고리즘이 동작하기 시작하게 된다. 이때 메모리를 회수하기 위해 page cache에 있는 페이지들중 dirty 페이지를 하드디스크에 sync시켜 버리고 물리메모리에서 제거하면 그 메모리는 free 메모리로 사용할 수 있게 된다. 페이지를 sync하기 위해서 즉 하드디스크에 write하기위해서는 I/O를 수행하여야 하며 그러기 위해선 또 다시buffer_head를 할당해야만 하는 웃지 못할 일이 발생한다. 이런 문제들을 방지하기 위하여 있는 플래그이다.
-
-간단하게 설명하면 GFP_NOIO 플래그를 지정하지않으면 드라이버에서 메모리를 할당하려고했는데 돌고돌아서 다시 드라이버가 호출될 수 있다는 것입니다. 결국 또 메모리 할당 함수가 호출되고 무한 루프가 될 수 있습니다.
-
 그리고 이전에 설명한대로 preload()를 실행하고 spin-lock을 잡습니다.
-
 그 다음은 섹터 번호로 키 값을 만듭니다. 그리고 page 구조체의 index필드에 키값을 저장하고 radix_tree_insert()함수를 이용해서 트리에 페이지를 추가하면 됩니다.
 
-##사용자 어플과 커널간의 데이터 이동
+mybrd_inser_page() adds a page into the radix-tree.
+
+It checks that the specified sector is already in the radix-tree.
+If there is not the specified sector, it allocated a page.
+It calls preload() and locks the spin-lock.
+Then it creates a key with the sector number and save the key in the index field of struct page.
+The page is added into the radix-tree with radix_tree_insert() function.
+
+FYI, let's think about the page flag for a while.
+We are making a driver for IO handling, so we MUST use GFP_NOIO flag.
+
+I'll explain why briefly.
+For example, let's assume that there is a function to allocate buffer_head for block IO.
+If that function is called when system doesn't have enough free memory, page reclaim mechanism in kernel will be activated.
+If there are many dirty pages, the page reclaiming will flush dirty pages into hard-disk and make free pages.
+For dirty page sync, kernel need to allocate buffer_head to write data into hard-disk.
+Therefore the function allocating buffer_head is called recursively.
+GFP_NOIO and GFP_NOFS flags allocate page without generating IO, so they can prevent this situation.
+
+In other words, if we don't use GFP_NOIO in block device driver, a driver is called recursively infinitely.
+
+## data transferring between user application and kernel
 
 ### copy_from_user_to_mybrd()
 
