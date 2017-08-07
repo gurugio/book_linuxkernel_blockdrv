@@ -148,7 +148,7 @@ Whenever we pass data to the radix-tree, it simulates passing data to ramdisk.
 
 ### copy_from_user_to_mybrd()
 
-This function writes data from kernel to ramdisk which is represented by the radix-tree.
+This function writes data of one sector from kernel to ramdisk which is represented by the radix-tree.
 Function arguments are
 
 * src_page: a page including data
@@ -156,23 +156,45 @@ Function arguments are
 * src_offset: offset of data in src_page
 * sector: sector number of the data
 
-섹터 번호를 알고있으니 트리에서 해당 섹터를 포함하는 페이지를 찾아올 수 있습니다. 그런데 그 페이지 전체의 데이터를 사용할게 아니지요. 그 중에 요청된 섹터만 필요합니다. 따라서 섹터 번호를 가지고 트리에서 찾아낸 페이지 안에 어디부터가 우리가 쓸 데이터인지를 알아내야합니다. 그게 바로 target_offset입니다. sector & (8-1)은 섹터 번호를 8로 나눈 나머지를 의미합니다. 한 페이지에 8개의 섹터가 들어가니까요. 이렇게하면 페이지 안에 섹터의 위치를 알 수 있고 여기에 512를 곱하면 offset이 됩니다.
+Let's look into the source code.
+We can find a page in the radix-tree with the specified sector number.
+But we will not use the entire page.
+We will use only 512-byte of the page.
+So we need to calculate where to store data in the page.
+That is the target_offset value.
+The sector location in the page is ``sector % 8``.
+``512 * (sector % 8)`` is the offset in the page because one sector is 512-byte.
 
-그 다음은 얼마만큼 복사할지 copy 변수에 저장합니다. 하나의 bio가 가질 수 있는 데이터의 크기는 4096바이트입니다. 우리가 디스크의 블럭 사이즈를 4096으로 지정했기 때문입니다. 세그먼트는 블럭 내에 저장되는 단위이므로 한 블럭의 크기를 초과할 수 없고, 결국 한 페이지보다 클 수 없습니다. 하지만 만약 offset이 2048이고 총 복사해야할 길이가 4096이라면 두개의 페이지를 찾아야합니다. 따라서 copy값을 계산할 때 len값을 그대로 쓸지, 한 페이지에서 복사할 크기만을 쓸지를 선택합니다.
+The variable, copy, stores how many bytes will be copied.
+One bio can store maximum 4096 bytes because we have set the block size of the disk as 4096.
+Segment is stored in one block, so segment cannot be bigger than a block which is 4096 bytes.
 
-그 다음은 요청된 섹터를 갖는 페이지를 찾습니다. 페이지가 없을 수 있습니다. 처음 쓰기가 발생한 섹터라면 트리에 페이지가 없겠지요. 그럴때는 트리에 페이지를 추가해주면 됩니다. 이때도 마찬가지로 2개의 페이지에 걸쳐서 데이터가 있을 수 있으므로 2개의 페이지를 추가할 수 있습니다.
+Please notice We have a special case.
+If offset is 2048 and data size is 4096, we need to copy data into two pages.
+So we need to check the size of the first copy.
 
-이제 페이지에 있는 데이터를 복사해와야합니다. 커널이 전달한 페이지는 src_page이고 우리가 할당한 페이지는 dst_page이므로 각각 kmap()함수를 써서 메모리 주소를 알아낸 다음 메모리 복사를 하면 됩니다.
+Next we find a page including the specified sector.
+If that sector is not accessed before, finding the page have to be failed.
+For that case, new pages should be added into the radix-tree.
+If data will be stored only in a page, only one page is added.
+If not, two page are added.
 
-###copy_from_mybrd_to_user()
+Finally data in the kernel page is copied into radix-tree.
+Until now, we have only pages, so we should use kmap() to get kernel addresses of each page, and start memory copy.
 
-램디스크의 데이터를 사용자에게 보내주는 함수입니다. 커널이 이미 어떤 페이지의 어떤 위치에 데이터를 저장하라고 지정해줬기 때문에 드라이버는 자신이 가진 데이터를 정해진 위치에 복사하기만하면 됩니다.
+### copy_from_mybrd_to_user()
 
-그런데 처음 접근되는 섹터라면 해당되는 페이지가 없을 수 있습니다. 그럴때는 데이터가 없는 영역이므로 0으로된 데이터를 보냅니다. 나중에 해당 섹터에 쓰기가 발생되면 트리에 데이터를 추가합니다.
+This function gets data from ramdisk.
+Kernel already informs the page where data should be copied.
+Driver should find data inside of the radix-tree and copy data into the kernel page.
 
-##bio를 읽고 IO 실행
+If the sector is not accessed before, there should not be any page.
+In that case, data must be zero.
+So we clear the kernel page with zero.
 
-###mybrd_make_request_fn에 데이터 처리 추가
+## bio handling
+
+### mybrd_make_request_fn에 데이터 처리 추가
 
 이제 사용할 함수들이 다 만들어졌으니 mybrd_make_request_fn()에서 호출하기만하면 됩니다. bio_for_each_segment() 루프안에서 읽기일때는 copy_from_mybrd_to_user()를 호출하고 쓰기일때는 copy_from_user_to_mybrd()를 호출하면 됩니다.
 
