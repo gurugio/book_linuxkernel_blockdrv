@@ -194,30 +194,54 @@ So we clear the kernel page with zero.
 
 ## bio handling
 
-### mybrd_make_request_fn에 데이터 처리 추가
+### add data handling at mybrd_make_request_fn()
 
-이제 사용할 함수들이 다 만들어졌으니 mybrd_make_request_fn()에서 호출하기만하면 됩니다. bio_for_each_segment() 루프안에서 읽기일때는 copy_from_mybrd_to_user()를 호출하고 쓰기일때는 copy_from_user_to_mybrd()를 호출하면 됩니다.
+We finished to implement sub-routines.
+Now let's add data handling mybrd_make_request_fn() with the sub-routines.
 
-한가지 주의할게 루프내에서 섹터 번호를 증가시켜야 한다는 것입니다. 섹터 번호는 bio구조체에 첫번째 섹터번호만 전달됩니다. 따라서 데이터를 처리한 후에는 처리된 데이터만큼 섹터 번호를 증가시켜야합니다. 데이터 크기를 512로 나누면 섹터 크기가 되겠지요.
+We already have bio_for_each_segment() loop.
+So we can add calling copy_from_mybrd_to_user() for data reading and copy_from_user_to_mybrd() for data writing.
 
-###데이터 캐시 처리
+Please notice that we should increase the sector number.
+The bio has only the first sector number and bvec can have multi-sector data.
+If data size of the bio is bigger than one sector size, we should increase the sector number in the loop.
 
-여기서 한가지 매우 중요한 사항이 있습니다. 눈에 잘 보이지는 않지만 만약 잊어버렸을경우 심각하면서도 찾기 힘든 버그가 생길 수 있는 것인데 바로 캐시에 대한 처리입니다. 김민찬님의 글을 보면 잘 설명이 되어있습니다.
+### cache handling
 
-http://barriosstory.blogspot.de/2009/01/flushdcachepage-kmapatomic.html
+There is one thing very important but it's easy to forget and hard to debug.
+It is cache handling.
 
-우리 드라이버는 사용자가 요청한 데이터를 읽고 씁니다. 따라서 데이터를 읽고 써야할 타겟 페이지는 사용자의 주소 공간에 맵핑된 페이지입니다. 원래 사용자가 사용하는 페이지인데 커널이 그 페이지를 커널의 주소 공간에 맵핑한다음 드라이버에 데이터를 요청하는 것입니다. 따라서 커널이 그냥 데이터를 쓰기만하면 메모리에는 데이터가 복사될 수 있어도 프로세서의 캐시에는 데이터가 업데이트되지 않을 수 있습니다. 그러므로 캐시에 있는 데이터를 무효화하는 과정이 필요합니다.
+Please read following documents before going ahead.
 
-읽기 요청일때는 드라이버가 가진 데이터를 사용자 페이지로 복사합니다. 드라이버는 이미 커널 영역의 페이지에 데이터를 가지고 있으므로 드라이버가 자신의 페이지에 접근할 때는 캐시 무효화가 필요없습니다. 하지만 데이터 복사가 끝난 뒤에는 캐시 무효화를 해줘서 사용자가 페이지에 접근할 때 메모리로부터 다시 캐시로 데이터가 전송되도록 만듭니다.
+* http://www.infradead.org/~mchehab/kernel_docs/unsorted/cachetlb.html
+* http://www.linuxjournal.com/article/7105
 
-반대로 쓰기 요청일때는 커널에 사용자의 페이지에 접근해야합니다. 커널이 페이지를 읽기전에 캐시를 무효화해놓고 메모리를 읽어야합니다. 따라서 copy_from_user_to_mybrd()를 호출하기전에 캐시 무효화함수를 호출합니다.
+Driver handles user-requested data.
+The pages, driver should handle, are mapped to user address-space.
+They are user pages but kernel mapped them into kernel address-space and provide them to driver.
+Even-after kernel updates the pages. processor cache cannot be updated because pages are mapped to two address-spaces.
+Therefore it's essential to invalidate cache.
 
-캐시관리가 좀 어려운 이유가 하드웨어 플랫폼에따라 VIVT니 VIPT같은 캐시 정책이 다르기 때문입니다. 이런 캐시 무효화도 플랫폼에 따라 필요없을 수 있습니다. 어쨌든 커널은 모든 플랫폼에서 사용될 수 있는 함수들을 제공하고 있으므로, 플랫폼에 상관없이 캐시 처리를 해준다면 커널이 플랫폼에 따라서 실제로 뭔가를 할 수도 있고 안할 수도 있습니다.
-##데이터 읽기 쓰기 실험
+For reading disk, driver copies its data into user page and page contents are updated.
+After copy, driver should invalidate cache.
+If user read the page, the updated data in memory will be sent to processor cache and user can see the updated data.
 
-###bio 확인 및 데이터 저장 확인
+For writing disk, driver should access user's page.
+Before accessing, driver should invalidate cache to read the latest data in user page.
+As you can see in the driver source, driver calles cache invalidating function before copy_from_user_to_mybrd().
 
-bio 실험에서도 쓰기가 좀더 간단하다는걸 알았습니다. 먼저 쓰기가 잘 되는지를 확인해보겠습니다.
+Cache handling depends on hardware platform and cache policy.
+Above cache invalication would not be necessary for a certain platform.
+
+Kernel always provides interfaces common for all platforms, so we should call cache handling without caring platform.
+
+## experiement for data read/write
+
+### check bio and data writing
+
+We found out that data writing is easier when we tested bio.
+Let's test data writing first.
+
 ```
 / # dd if=/dev/urandom of=/dev/mybrd bs=4096 count=2
 [   56.168167] random: dd urandom read with 52 bits of entropy available
