@@ -274,7 +274,18 @@ KB) copied, 0.015329 seconds, 521.9KB/s
 ```
 2개의 write용 bio가 발생했습니다. 섹터는 0번과 8번입니다. 각각 8개의 섹터니까 4096바이트 크기네요. 세그먼트 정보와도 일치합니다. 섹터 0에 해당하는 페이지를 찾아봤지만 실패했다는게 나왔고 그래서 새로운 페이지를 할당해서 트리에 추가했고, 그걸 다시 읽어와서 데이터를 복사했다는걸 알 수 있습니다. 데이터를 /dev/urandom에서 읽어왔습니다. 이 장치는 난수를 발생시키는 장치입니다. 커널 로그에도 d7 22 등등 난수들이 저장된걸 확인할 수 있습니다.
 
-이제 데이터가 잘 저장된건가 확인하기위해 파일을 읽어보겠습니다.
+We can see two bios were generated.
+Sector numbers of each bio is 0 and 8.
+And each bio has 4096 data size.
+Each segment also has 4096 size, that means each bio has only one segment.
+
+There is a message that finding a page for sector 0 failed.
+And driver allocated a page and added it to the radix-tree.
+The page was used for storing data.
+Storing data is passed from /dev/urandom which is a device to generate random numbers.
+So driver shows the stored data are random values like d7 22.
+
+Let's check written data.
 ```
 / # dd if=/dev/mybrd of=/dev/null bs=4096 count=1
 [  316.710833] mybrd: start mybrd_make_request_fn: block_device=ffff88000619c340 mybrd=ffff8800069daa40
@@ -303,6 +314,12 @@ KB) copied, 0.015329 seconds, 521.9KB/s
 4096 bytes (4.0KB) copied, 0.010485 seconds, 381.5KB/s
 ```
 1개 페이지만 읽어봤는데 이전과 마찬가지로 read-ahead가 실행되서 32개의 섹터를 읽어들이네요. 0번 섹터에 해당하는 페이지를 읽었고 써진 값이 d7 22 등 이전에 저장한 값과 같습니다. 써진 값을 제대로 읽어왔네요. 다음 페이지도 써진 값이 다시 읽혀진걸 확인할 수 있습니다. 그 다음 페이지들은 아직 데이터가 없는 페이지이므로 0으로 반환되었습니다.
+
+We tried reading one page but read-ahead machanism read 32 sectors.
+Driver could read 0-sector and its values were d7 22 that is the data we wrote before.
+Next page also has the data we wrote.
+So we can confirm that data reading works fine.
+Other pages were zero because they weren't accessed yet.
 
 ###파일시스템 생성 실험
 
