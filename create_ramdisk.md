@@ -82,17 +82,14 @@ Please read following document if you want to know rcu in detail.
 
 https://lwn.net/Articles/262464/
 
-rcu_read_lock()의 핵심은 트리를 읽는 쓰레드는 배타적으로 실행될 필요없이 동시에 실행될 수 있다는 것입니다. 트리에서 페이지를 찾는 동작은 트리를 읽기만하지 뭔가를 바꾸지 않습니다. 따라서 rcu_read_lock()를 사용할 수 있습니다.
-
-그 다음은 섹터 번호를 가지고 키 값을 만드는 것입니다. 하나의 페이지에는 4096바이트이고 섹터는 512바이트이므로 총 8개의 섹터가 저장될 수 있는데 이중에 어떤 섹터 번호를 키 값으로 할거냐가 문제가 됩니다. 우리는 항상 페이지에 저장되는 최초의 섹터 번호를 키값을 정하겠습니다. 따라서 라는 공식이 생성됩니다.
-
-그 다음은 섹터 번호를 가지고 키 값을 만드는 것입니다. 하나의 페이지에는 4096바이트이고 섹터는 512바이트이므로 하나의 페이지에 총 8개의 섹터가 저장될 수 있습니다. 그러므로 우리는 각 페이지에 시작부분에 저장되는 섹터의 번호를 이용해서 키값을 생성하겠습니다.
-
-먼저 예로 몇개의 (섹터 키) 값의 쌍을 한번 계산해보겠습니다.
-
 rcu_read_lock() allows multi-thread to access the tree concurrently.
+Since searching a page in the radix-tree doesn't modify the radix-tree, we can use rcu_read_lock() here.
 
+Next we create a key value with the sector number.
+One page is 4096-byte and one sector 512-byte, so 8-sector can be stored in one page.
+The first sector in a page should be used for the key creation.
 
+Following is an example of pair of sector number and key value.
 
 
 ```
@@ -107,11 +104,17 @@ rcu_read_lock() allows multi-thread to access the tree concurrently.
 16 2
 ```
 
-이걸 수학공식으로 표현하면 (섹터번호*512/4096)가 되고, 비트 연산 코드로 만들면 sector >> (12 - 9) 가 됩니다. 그런데 페이지 크기는 플랫폼마다 다를 수 있습니다. 커널에서는 플랫폼마다 다른 페이지 크기를 매크로로 정의하고 있습니다. PAGE_SIZE, PAGE_SHIFT등의 매크로를 사용하면 플랫폼 상관없이 페이지 크기를 확인할 수 있습니다. 따라서 최종 코드는 sector >> (PAGE_SHIFT - 9)가 됩니다.
+Therefore we can make a equation: ``key_value = (sector_number * 512) / 4096``
+And that equation could be coded like: ``key = sector >> (12 - 9)``
+Page size could be differect on each platform.
+So kernel defines a page size with PAGE_SIZE macro and bit size with PAGE_SHIFT.
+Final code would be: ``key = sector >> (PAGE_SHIFT - 9)``
 
-키 값을 계산했으면 radix_tree_lookup()을 호출해서 페이지를 찾습니다. 페이지가 없을 수 있습니다. 아직 해당 섹터에 데이터를 안쓴것입니다.
+Then we call radix_tree_lookup() with the key value to find a page.
+Finding a page can be failed.
+It means that any data is not written to the specified sector yet.
 
-###mybrd_insert_page()
+### mybrd_insert_page()
 
 트리에 페이지를 추가합니다. 가장 먼저 이미 해당 섹터가 트리에 있는지를 확인합니다. 트리에 찾고자하는 페이지가 없다면 먼저 페이지를 할당합니다. 
 
