@@ -36,7 +36,7 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 * [prepare](environment.md) - done
 * [skeleton of mybrd](mybrd_skeleton.md) - done
 * [disk](create_disk.md) - done
-* [ramdisk](create_ramdisk.md)
+* [ramdisk](create_ramdisk.md) - done
 * [request-mode](request-mode.md)
 * [multiqueue-mode](multiqueue-mode.md)
 * [pagecache_and_blockdriver](pagecacheand_blockdriver.md)
