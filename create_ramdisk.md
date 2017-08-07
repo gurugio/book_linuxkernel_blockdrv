@@ -272,7 +272,6 @@ Let's test data writing first.
 8192 bytes (8.0[   56.183787] dd (1048) used greatest stack depth: 13832 bytes left
 KB) copied, 0.015329 seconds, 521.9KB/s
 ```
-2개의 write용 bio가 발생했습니다. 섹터는 0번과 8번입니다. 각각 8개의 섹터니까 4096바이트 크기네요. 세그먼트 정보와도 일치합니다. 섹터 0에 해당하는 페이지를 찾아봤지만 실패했다는게 나왔고 그래서 새로운 페이지를 할당해서 트리에 추가했고, 그걸 다시 읽어와서 데이터를 복사했다는걸 알 수 있습니다. 데이터를 /dev/urandom에서 읽어왔습니다. 이 장치는 난수를 발생시키는 장치입니다. 커널 로그에도 d7 22 등등 난수들이 저장된걸 확인할 수 있습니다.
 
 We can see two bios were generated.
 Sector numbers of each bio is 0 and 8.
@@ -286,6 +285,7 @@ Storing data is passed from /dev/urandom which is a device to generate random nu
 So driver shows the stored data are random values like d7 22.
 
 Let's check written data.
+
 ```
 / # dd if=/dev/mybrd of=/dev/null bs=4096 count=1
 [  316.710833] mybrd: start mybrd_make_request_fn: block_device=ffff88000619c340 mybrd=ffff8800069daa40
@@ -313,7 +313,6 @@ Let's check written data.
 1+0 records out
 4096 bytes (4.0KB) copied, 0.010485 seconds, 381.5KB/s
 ```
-1개 페이지만 읽어봤는데 이전과 마찬가지로 read-ahead가 실행되서 32개의 섹터를 읽어들이네요. 0번 섹터에 해당하는 페이지를 읽었고 써진 값이 d7 22 등 이전에 저장한 값과 같습니다. 써진 값을 제대로 읽어왔네요. 다음 페이지도 써진 값이 다시 읽혀진걸 확인할 수 있습니다. 그 다음 페이지들은 아직 데이터가 없는 페이지이므로 0으로 반환되었습니다.
 
 We tried reading one page but read-ahead machanism read 32 sectors.
 Driver could read 0-sector and its values were d7 22 that is the data we wrote before.
@@ -321,9 +320,10 @@ Next page also has the data we wrote.
 So we can confirm that data reading works fine.
 Other pages were zero because they weren't accessed yet.
 
-###파일시스템 생성 실험
+### creating filesystem
 
-그냥 dd만 가지고 실험하면 좀 심심하니까 본격적으로 mybrd를 진짜 디스크라고 생각하고 파일시스템을 생성해보겠습니다. 방법은 간단합니다. mkfs.vfat를 쓰면 간단하게 vfat 파일시스템을 생성할 수 있습니다.
+Let's assume that mybrd is a real disk and create vfat filesystem on mybrd with mkfs.vfat.
+
 ```
 / # mkfs.vfat /dev/mybrd 
 [  449.918935] mybrd: start mybrd_ioctl
@@ -561,7 +561,9 @@ none on /sys type sysfs (rw,relatime)
 /dev/mybrd on /mnt type vfat (rw,relatime,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro)
 ```
 
-좀 깁니다. 그만큼 데이터를 많이 읽고쓰고 있네요. mount 명령으로 잘 마운트가 됩니다. 파일시스템이 생겼으니 당연히 파일을 한번 만들어봐야지요.
+mybrd device can be mounted because it has filesystem.
+And let's create a file.
+
 ```
 / # cd mnt
 /mnt # ls
@@ -571,9 +573,11 @@ asdf
 asdf
 /mnt # 
 ```
-파일이 생기고 파일에 데이터도 썼는데 드라이버가 아무런 동작도 하지 않습니다. 왜 그럴까요? 파일데이터가 바로 파일에 써지는게 아님을 알 수 있습니다. 우리가 파일에 데이터를 쓰면 파일시스템은 데이터를 메모리에 저장합니다. 이걸 버퍼 캐시라고 합니다.
 
-데이터가 메모리에 저장되므로 드라이버에는 아직 데이터를 쓰라는 명령이 안온겁니다. 그럼 메모리의 데이터를 디스크에 저장하는 sync 프로그램을 실행해보겠습니다.
+Creating and writing file did not generate any IO because filesystem stores file data into cache memory, not disk.
+We need to run sync command to generate IO.
+That command flush data in memory into disk.
+
 ```
 /mnt # sync
 [  742.641735] mybrd: start mybrd_make_request_fn: block_device=ffff880006c0b740 mybrd=ffff88000771ce40
@@ -630,9 +634,13 @@ ddd
 asdf
 asdf
 ```
-이제야 데이터가 드라이버에 전달됩니다. 파일에 쓴 데이터는 잘 전달됐을까요? asdf라고 썼으니 각각 아스키코드가 0x61 0x73 0x64 0x66입니다. 커널 로그 중간에 같은 값들이 전달된게 보이네요. 그 다음 값이 0xa인걸보니 개행문자까지도 저장된게 보입니다. asdf를 두줄썼으니까 또 0x61 0x73 0x64가 보이네요.
 
-마지막으로 통계 정보를 확인해보겠습니다.
+We can see some data was written into mybrd disk.
+We wrote "asdf".
+Ascii code of "asdf" is 0x61 0x73 0x64 0x66 that was shown in the middle of messages.
+Other values should be meta data of filesystem.
+
+Following is the statistics of mybrd.
 ```
 / # cat /sys/block/mybrd/stat
       10        0      104       39       18        0      144       91        0       93       93
