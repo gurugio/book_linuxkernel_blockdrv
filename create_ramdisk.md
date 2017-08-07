@@ -116,10 +116,6 @@ It means that any data is not written to the specified sector yet.
 
 ### mybrd_insert_page()
 
-트리에 페이지를 추가합니다. 가장 먼저 이미 해당 섹터가 트리에 있는지를 확인합니다. 트리에 찾고자하는 페이지가 없다면 먼저 페이지를 할당합니다. 
-그리고 이전에 설명한대로 preload()를 실행하고 spin-lock을 잡습니다.
-그 다음은 섹터 번호로 키 값을 만듭니다. 그리고 page 구조체의 index필드에 키값을 저장하고 radix_tree_insert()함수를 이용해서 트리에 페이지를 추가하면 됩니다.
-
 mybrd_inser_page() adds a page into the radix-tree.
 
 It checks that the specified sector is already in the radix-tree.
@@ -141,18 +137,24 @@ GFP_NOIO and GFP_NOFS flags allocate page without generating IO, so they can pre
 
 In other words, if we don't use GFP_NOIO in block device driver, a driver is called recursively infinitely.
 
-## data transferring between user application and kernel
+## data transferring between application and disk
+
+So far, we investigated some sub-routines for the radix-tree.
+Those sub-routines are used to transfer a sector to the radix-tree.
+Now let's see how we can pass arbitrary-size data to the radix-tree.
+
+And don't forget that the radix-tree is the representation of a ramdisk.
+Whenever we pass data to the radix-tree, it simulates passing data to ramdisk.
 
 ### copy_from_user_to_mybrd()
 
-사용자로부터 커널을 통해 전달된 데이터를 램디스크에 쓰는 함수입니다.
+This function writes data from kernel to ramdisk which is represented by the radix-tree.
+Function arguments are
 
-함수 인자는
-
-* src_page: 데이터가 저장된 페이지
-* len: 데이터의 크기
-* src_offset: 페이지 안에 어디서부터 데이터가 시작하는지를 알려주는 offset
-* sector: 커널이 요청한 섹터 번호
+* src_page: a page including data
+* len: size of data
+* src_offset: offset of data in src_page
+* sector: sector number of the data
 
 섹터 번호를 알고있으니 트리에서 해당 섹터를 포함하는 페이지를 찾아올 수 있습니다. 그런데 그 페이지 전체의 데이터를 사용할게 아니지요. 그 중에 요청된 섹터만 필요합니다. 따라서 섹터 번호를 가지고 트리에서 찾아낸 페이지 안에 어디부터가 우리가 쓸 데이터인지를 알아내야합니다. 그게 바로 target_offset입니다. sector & (8-1)은 섹터 번호를 8로 나눈 나머지를 의미합니다. 한 페이지에 8개의 섹터가 들어가니까요. 이렇게하면 페이지 안에 섹터의 위치를 알 수 있고 여기에 512를 곱하면 offset이 됩니다.
 
