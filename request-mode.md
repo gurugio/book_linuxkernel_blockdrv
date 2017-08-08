@@ -1,14 +1,35 @@
 # request-mode
 
-이전 장에서는 bio를 기준으로 IO를 실행했습니다. 커널로부터 bio를 받아서 bio에 있는 세그먼트를 하나씩 꺼내서 IO를 처리했습니다. 이전에 설명했듯이 bio는 IO의 최소단위입니다. 최소단위니까 당연히 그보다 큰 단위도 있겠지요. 바로 request입니다.
+So far we've looked into bio-based IO.
+Our mybrd driver receives a bio one by one from kernel and processes it in order.
+As I explained before, bio is the least unit of IO.
+Of course, there is bigger unit than bio.
+It is the request.
 
-이전장에서 분명히 request-queue를 만들면서 request가 저장되는 큐라고 설명해놓고, 사실 request는 사용하지 않았습니다. 커널이 request-queue에서 bio를 꺼내서 드라이버가 제공한 함수를 호출했습니다. 드라이버는 bio단위로 IO를 처리했구요. 이제야 진짜 request-queue를 제대로 쓰게 되는 것입니다.
+In previous chapters, I explained that request-queue is a queue in which requests are stored.
+But we didn't use the request at all.
+We just exported a bio-handler function for kernel and had kernel call it with bio.
+Fianlly we will use request-queue with request in this chapter.
 
-bio는 연속된 섹터들의 집합입니다. 섹터는 연속되어있지만 단지 각 섹터들이 저장된 페이지는 연속된게 아니지요. 그래서 세그먼트 단위로 꺼내서 각 세그먼트마다 저장된 페이지를 확인했었습니다. 
+Again, bio is a set of sequential sectors.
+Sectors are sequantial but pages, which store sectors, are not sequantial.
+So we extracted segments from bio and check which page includes the segment.
 
-request는 bio의 집합입니다. 커널은 IO를 시작할 때 하나의 request를 만들고 하나의 bio를 만들어서 request-queue에 저장합니다. 그럼 request는 큐에 어느정도 저장되어있다가 언젠가 드라이버가 꺼내가겠지요. request가 큐에 저장되어있는동안 아무일도 일어나지 않고 기다리기만 하는게 아닙니다. 바로 이때 IO scheduler라는게 등장합니다.
+The request is a set of bios.
+When Kernel starts IO processing, it creates a request which includes one bio and inserts the request into the request-queue.
+Soon or later, driver will extract a request from the request-queue and process it.
+While the request is in the request-queue, IO scheduler does something for the request.
 
-request가 만들어질때는 하나의 bio만 들고있었습니다. IO scheduler는 바로 request에 bio를 추가하는 일을 합니다. 예를 들어 0~7번 섹터를 쓰는 request가 큐에 저장되어있다고 봅시다. 그런데 어플이 계속 쓰기 동작을 실행해서, 8~15번 섹터를 쓰는 request가 생성되서 큐에 들어올 수 있습니다. 이때 이 request들을 따로 처리하면 디스크의 헤더를 0번에 놨다가, 중간데 다른 쪽으로 갔다가, 다시 8번으로 놔야합니다. IO scheduler는 이런 낭비를 없애기위해 두번째 들어온 request를 없애고 첫번째 request에서 0~15번 섹터를 쓰도록 request를 재구성합니다. 그럼 디스크는 헤더를 한번만 움직이게되고 연속된 데이터를 읽을 수 있으니 throughput 성능이 좋아지게됩니다.
+As I told you, there is only one bio in the request at the beginning.
+What IO scheduler does is adding more bios into the request.
+For example, let's assume there is a write-request including 8 sectors (sector numbers are 0~7) in the request-queue.
+And user application continues to write data at sector 8~15.
+Kernel also creates a request for sector 8~15 and adds it into the request-queue.
+Now IO scheduler does its job.
+It merges two requests into one for sector 0~15.
+
+The job of IO scheduler is watching the request-queue and merging sequential IO request.
+It can increase disk throughtput.
 
 IO scheduler는 noop, cfq, deadline등이 있습니다. 방금 설명한 request 합치기 외에도 다양한 기능들을 제공해서 디스크 성능을 쥐어짜고 있습니다. 서버의 동작 방식에 따라 어떤 스케줄러를 쓸건지 선택하면 됩니다.
 
