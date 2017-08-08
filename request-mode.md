@@ -67,9 +67,16 @@ For now, please notice that we need to do three things:
 
 ### blk_init_queue_node()
 
-이제부터 커널 코드를 조금씩 보겠습니다. 커널 소스를 받고 태그를 생성해놓으셨을거라 생각됩니다. 그럼 blk_init_queue_node()함수를 찾아보시면 blk_alloc_queue_node()와 blk_init_allocated_queue()로 이뤄어져있다는걸 확인할 수 있습니다.
+From now, we start reading kernel source.
+I think you've done downloading kernel source and generating tag. 
+Please find blk_init_queue_node() function.
+You can see blk_init_queue_node() is combination of blk_alloc_queue_node() and blk_init_allocated_queue().
 
-blk_alloc_queue_node()는 이미 우리가 사용했던 함수입니다. 즉 아주 단순하게 bio처리만 할 수 있는 큐를 만드는 함수입니다. 이렇게 만들어진 큐에 blk_init_allocated_queue()를 이용해서 뭔가 추가적인 설정을 하게되고 그래서 결국 request를 처리하는 큐가 만들어지는 것입니다.
+We already know what blk_alloc_queue_node() does.
+It generates a bio-based request-queue.
+So what blk_alloc_queue_node() does are
+1. create a bio-based request-queue
+2. initialize the request-queue to be request-handler
 
 blk_init_allocated_queue() 함수를 보면 눈에 띄는 것이 큐의 request_fn 필드에 우리가 전달한 함수 포인터를 설정하는 것입니다. 나중에 커널에서 큐의 request_fn 포인터를 읽어서 드라이버의 함수를 호출할 것입니다. 그리고 우리가 전달한 spin-lock도 큐에 저장됩니다.
 
