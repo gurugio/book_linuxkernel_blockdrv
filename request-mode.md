@@ -22,20 +22,22 @@ While the request is in the request-queue, IO scheduler does something for the r
 
 As I told you, there is only one bio in the request at the beginning.
 What IO scheduler does is adding more bios into the request.
-For example, let's assume there is a write-request including 8 sectors (sector numbers are 0~7) in the request-queue.
-And user application continues to write data at sector 8~15.
-Kernel also creates a request for sector 8~15 and adds it into the request-queue.
+For example, let's assume there is a write-request including 8 sectors (sector numbers are 0 ~ 7) in the request-queue.
+And user application continues to write data at sector 8 ~ 15.
+Kernel also creates a request for sector 8 ~ 15 and adds it into the request-queue.
 Now IO scheduler does its job.
-It merges two requests into one for sector 0~15.
+It merges two requests into one for sector 0 ~ 15.
 
 The job of IO scheduler is watching the request-queue and merging sequential IO request.
-It can increase disk throughtput.
+It can increase disk throughtput because head of HDD disk moves less.
 
-IO scheduler는 noop, cfq, deadline등이 있습니다. 방금 설명한 request 합치기 외에도 다양한 기능들을 제공해서 디스크 성능을 쥐어짜고 있습니다. 서버의 동작 방식에 따라 어떤 스케줄러를 쓸건지 선택하면 됩니다.
+IO scheduler has severy scheduler policy such as noop, cfq, deadline and etc.
+And it has more features to increase block IO performance.
+Please refer other documents for the detail.
 
-이제 기존 코드를 수정해서 bio가 아닌 request를 처리하도록 만들어보겠습니다.
+In this chapter, we will modify mybrd driver source to handle requests.
 
-소스: https://github.com/gurugio/mybrd/blob/ch04-request-mode/mybrd.c
+source: https://github.com/gurugio/mybrd/blob/ch04-request-mode/mybrd.c
 
 ##SOFTIRQ에서 request 처리
 소스: https://github.com/gurugio/mybrd/blob/ch04-request-mode-softirq/mybrd.c
