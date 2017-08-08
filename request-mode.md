@@ -78,17 +78,34 @@ So what blk_alloc_queue_node() does are
 1. create a bio-based request-queue
 2. initialize the request-queue to be request-handler
 
-blk_init_allocated_queue() 함수를 보면 눈에 띄는 것이 큐의 request_fn 필드에 우리가 전달한 함수 포인터를 설정하는 것입니다. 나중에 커널에서 큐의 request_fn 포인터를 읽어서 드라이버의 함수를 호출할 것입니다. 그리고 우리가 전달한 spin-lock도 큐에 저장됩니다.
+Let's see the code of blk_init_allocated_queue().
+It stores the pointer of request handler to request_fn field of the request-queue.
+Kernel will call the request_fn field to handle the request.
+And it also stores the spin-lock into the request-queue.
 
-그리고 또 익숙한 함수가 있습니다. blk_queue_make_request()함수가 있고, 함수 인자에 blk_queue_bio라는 함수가 전달되고 있습니다. 분명 드라이버가 제공하는 함수가 아닙니다. 커널에 포함된 함수입니다. 나중에 디스크가 커널에 등록되고 큐가 동작을 시작하면 커널이 blk_queue_bio() 함수를 통해 큐에서 bio를 꺼내온다는걸 알 수 있습니다. 그리고 마지막으로 elevator_init()라는 함수를 호출합니다. 이 elevator라는게 뭘까요. 
+We can find another familiar function, blk_queue_make_request() which we used to make bio-based IO processing.
+It takes the request-queue and blk_queue_bio() function as parameters.
+As we made before, kernel initializes blk_queue_bio() function as bio handler.
+Last kernel calls elevator_init() function.
 
-여기서 커널 분석할때 한가지 팁을 말씀드리겠습니다. 커널 개발자들은 매우 뛰어난 사람들입니다. 전세계에서 얼마나 많은 리눅스 서버들, 임베디드 리눅스 장비들이 짧게는 며칠씩 길게는 몇년씩 돌아가고 있을지 상상해보세요. 그런 안정성을 가진 거대한 소프트웨어를 만들려면 저같은 사람은 비교도 안되게 뛰어난 사람들이 디자인하고 핵심 코드를 만들었을 것입니다. 그런 사람들이 코드에 주석다는걸 좋아할까요? 매우 싫어합니다. 왜냐면 코드만 만들기도 바쁜데 주석을 쓰는 시간도 아깝다는 사람도 있습니다. 그리고 더 큰 이유는 코드만 봐도 이해가 되는데 왜 주석을 달아야되는지 필요성을 모르겠다는 것입니다. 만약 코드가 봐도 뭐하는지 모르겠다면 그건 잘못된 코드라는 것이지요. 얼마나 코드를 잘짜고 잘 읽으면 주석의 필요성을 모르겠다는건지 정말 대단합니다. 어쨌든 커널 코드는 주석을 잘 안답니다. 그런데 보세요. elevator_init()함수에는 주석이 있습니다. /* init elevator */라는 주석을 보는 순간 저는 사실 황당함을 느꼈습니다. 그냥 함수 이름을 그대로 써논거같은데 왜 주석을 달았을까요. 저는 개인적으로 그만큼 elevator라는게 중요하기 때문이라고 생각합니다. 커널 코드는 최대한 주석을 줄이려고하기때문에 주석이 있다는건 그만큼 중요하거나 그 뒷배경이 복잡한 코드라는 것입니다. 따라서 이 elevator라는 것도 블럭 레이어에 있어서 중요한 것일겁니다.
+There is something funny.
+Do you see a comment ``/* init elevator */``?
+Function name is elevator_init() that can explain itself.
+Why did kernel developer write that comment?
+Kernel code is review by so many genius developers and tested by so many Linux servers, embedded devices and Android devices.
+Kernel developers always try to keep code compact and simple.
+They write comment when it is really necessary.
+So I just guess that elevator initializing is very important thing in the IO processing.
 
-말을 길게 썼는데 사실 elevator는 IO scheduler를 말하는 것입니다. 이전에 우리가 bio 단위로 IO를 처리할 때는 elevator가 없는 큐를 썼었습니다. 그런데 지금 커널이 elevator가 있는 큐를 만들어주고 있습니다. 그래서 결론은 지금 생성되는 큐는 IO scheduler를 가지고 있는 큐라는 것입니다. 그래서 bio단위로 동작하는 큐보다 throughput이 좋을거라고 이전에 설명드렸습니다.
+Actuall that elevator is the IO scheduler.
+When we make bio-based driver, we creates a request-queue without the elevator.
+Now we can see that kernel creates a request-queue with the elevator.
+That means the request-queue will include the IO scheduler and generally have better throughput than the bio-based request-queue.
 
-elevator라는 이름이 좀 이상할수도 있습니다. 왜 스케줄러를 elevator라고 부르는건지 이유가 있습니다. 그 이유를 찾는건 조금만 검색해도 알 수 있으므로 여러분께 맡기겠습니다.
-
-커널은 많은 사람들이 의논해서 만들기때문에 이름을 지을때도 논쟁이 될때가 많습니다. IO scheduler같이 커널의 전체적인 성능에 중요한 일을 하는 코드에 갠히 elevator라는 이름을 붙이지는 않을 것입니다. 그 외에 다른 코드를 볼 때도 항상 왜 이런 이름을 붙였을까 고민해보는 것도 좋은 경험이 될것입니다.
+You maybe wonder why scheduler is names as elevator.
+Yes, kernel developers often choose wierd name.
+Please google why it is called as elevator just for fun.
+There should be a good reason.
 
 ###blk_queue_bio()
 
