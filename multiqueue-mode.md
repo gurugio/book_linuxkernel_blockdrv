@@ -1,11 +1,5 @@
 # multiqueue-mode
 
-이제 이 강좌의 골인 지점에 도달했습니다. 사실 앞의 bio-mode와 request-mode는 바로 multiqueue-mode를 잘 이해하기 위한 기초일 뿐이었습니다. 최신 커널을 이해하려면 multiqueue-mode를 이해해야합니다.
-
-저도 이제 막 multiqueue-mode를 공부하는 처지라 많이 부족합니다. 단지 대강의 흐름을 제시할 수 있고, 앞으로 커널을 분석하는데 시작 지점이 되었으면 합니다.
-
-multiqueue mode를 이해하려면 다음 참고자료를 먼저 보시기 바랍니다. 기존의 request-mode가 어떤 한계를 가졌고, 왜 multiqueue-mode가 등장하게 되었는지, 그리고 multiqueue-mode는 왜 어떻게 여러개의 큐를 구현하는지를 잘 봐야합니다. 사실 글만 봐서는 잘 이해가 안될 수 있습니다. 그래서 강좌를 읽으면서 직접 만들고 실험하다보면 글로 읽었던 그게 바로 이거구나 하는 순간이 올겁니다.
-
 Yes, we finally arrived at the goal.
 As the title shows, the goal of this document is making multiqueue-based block device driver.
 Making the bio-mode and the request-mode are just basic steps for multiqueue-mode.
@@ -30,7 +24,11 @@ references
 * http://ari-ava.blogspot.de/2014/07/opw-linux-block-io-layer-part-4-multi.html 
 
 ## 새로운 큐 만들기
+
 multiqueue-mode를 mq-mode라고 줄여서 부르겠습니다. mq-mode는 간단히말하면 여러개의 sw-queue (staging-queue라고도 부름)를 만드는 겁니다. 그리고 hw-queue도 여러개를 만듭니다.
+
+Let's call multiqueue-mode as mq-mode.
+
 
 sw-queue는 어플에서 전달된 IO의 request를 받습니다. 커널이 프로세서의 갯수만큼 생성합니다. 그리고 IO 스케줄러가 sw-queue에서 스케줄링을합니다. 지금까지 봤던 보통의 request-queue와 유사합니다. 그리고 이 sw-queue에서 hw-queue로  request를 전달합니다. hw-queue는 디스크 장치의 특성에 따라 한개가 될 수도 있고 여러개가 될 수도 있습니다. 하드웨어적으로 멀티 IO를 지원한다면 드라이버에서 여러개의 hw-queue를 만드는 것이고, 기존의 보통 하드디스크라면 하나의 hw-queue를 만듭니다. 그러면 커널이  sw-queue의 request를 hw-queue로 넘깁니다. 그리고 hw-queue에서는 드라이버의 request 처리 함수를 호출해서 request를 장치에 전달하도록 합니다.
 
