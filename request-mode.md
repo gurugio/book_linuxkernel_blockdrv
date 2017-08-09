@@ -138,60 +138,100 @@ Let's see the code for the request handling.
 
 ### mybrd_request_fn()
 
-우리는 mybrd_alloc()에서 큐를 만들면서 mybrd_request_fn() 함수를 등록했습니다. 이제 IO가 발생하면 커널이 request-queue에 request를 저장하고 적당한 시점에 mybrd_request_fn()를 호출해줄 것입니다. mybrd_request_fn() 함수 인자를 보면 request-queue가 전달됩니다. 큐 전체가 전달된 것입니다. 그러므로 mybrd_request_fn()이 호출되기전에 IO scheduler가 큐에 대한 처리를 끝냈다는걸 알 수 있습니다. 이제 드라이버는 큐에서 request를 하나씩 꺼내서 처리하면 됩니다.
+We registered mybrd_request_fn() as the request handler when we created the request-queue in mybrd_alloc().
+If IO is generated, kernel stores a request in the request-queue and calls mybrd_request_fn() with the request-queue.
+As you can see, mybrd_request_fn() has an argument of a pointer to the request-queue.
+What mybrd_request_fn() does is extracting the request from the request-queue and processing data in the request.
 
-We registered mybrd_request_fn() as bio handler when we created the request-queue in mybrd_alloc().
-If IO is generated, kernel stores a request in the request-queue
+#### blk_fetch_request()
 
-####blk_fetch_request()
+It extracts a request from the request-queue.
+In blk_queue_bio(), kernel locked the spin-lock before calling ``__blk_run_queue()``.
+So blk_fetch_request() will be executed with locked request-queue.
+Driver should unlock the request-queue after blk_fetch_request().
+User application can generate more IOs and kernel can add more requests into the request-queue during driver releases the spin-lock.
+And before calling blk_fetch_request(), driver should lock the request-queue.
+If driver doesn't unlock the request-queue, user application would wait until all requests are handled.
+So performance of mybrd would be bad.
 
-request-queue에서 request를 뽑아오는 함수입니다. 참고로 이전에 blk_queue_bio() 함수에서 __blk_run_queue()를 호출하기전에 큐의 spin-lock을 잠그는 코드가 있었습니다. 따라서 blk_fetch_request()를 호출할 때는 큐가 잠겨있는 상태입니다. 그러므로 blk_fetch_request()를 호출하기전에 락을 잠글 필요가 없습니다. 대신 호출 후에 락을 풀어줍니다. 드라이버가 큐를 처리하는 중에 사용자 어플에서 다시 IO를 발생시키고, 커널이 큐에 접근해야할 필요가 생길 수 있습니다. 만약 락을 안풀어주면 커널은 큐에 접근할 수 없게되고 어플은 IO를 발생시키지도 못하겠지요.
+blk_fetch_request() calls blk_peek_request() and prep_rq_fn function pointer.
+prep_rq_fn function should returns one of BLKPREP_OK, BLKPREP_DEFER and BLKPERP_KILL.
+mybrd_alloc() passes mybrd_prep_rq_fn() to blk_queue_prep_rq(), so prep_rq_fn function pointer indicates mybrd_prep_rq_fn().
+prep_rq_fn function should be a function to make a request ready.
+mybrd_prep_rq_fn() only stores the pointer of mybrd object at the special field of the request.
 
-참고로 blk_fetch_request() 함수의 코드를 보면 blk_peek_request()를 호출하게되고 여기에서 큐에 저장된 prep_rq_fn 함수 포인터를 읽고 호출합니다. prep_rq_fn 함수는 BLKPREP_OK나 BLKPREP_DEFER, BLKPERP_KILL 중 하나를 반환하게 돼있습니다.
+#### blk_end_request_all()
 
-이렇게 prep_rq_fn 함수가 무슨 값을 반환해야하는지 언제 호출되는지 등은 사실 커널 코드를 보지않으면 알수가 없습니다. 따라서 다른 커널 드라이버들이 blk_fetch_request()를 어떻게 호출하는지 등을 잘 보고 따라서 만들 필요가 있습니다. 물론 lkml등의 메일링 리스트를 계속 주시하면서 새롭게 생기는 코드들을 알아두면 prep_rq_fn이 생겼을때부터 적용할 수 있겠지요.
+It informs kernel the end of the request.
+Kernel creates the request, so kernel should free it.
+Driver passes the request pointer to be freed and error status to kernel.
+The error could be -EIO.
+If all is good, driver passes 0.
 
-어쨌든 mybrd_alloc()에서 blk_queue_prep_rq()함수에 mybrd_prep_rq_fn()을 전달했습니다. 그래서 prep_rq_fn이 호출될때 mybrd_prep_rq_fn()이 호출될거라는걸 알 수 있습니다.
+### _mybrd_request_fn()
 
-그리고 주의할 것은 blk_fetch_request()를 다시 호출하기전에 락을 잡는걸 잊지 말아야합니다. blk_fetch_request()함수의 주석을 보면 락이 잠긴 상태에서 호출되어야한다고 써있습니다. 커널의 주석은 한줄한줄 주의깊에 읽고 잘 따라야합니다.
+This function processes one request.
+The request from blk_getch_request() is be readied by mybrd_prep_rq_fn().
+So the special field has pointer to mybrd object.
+You can make your own preperation function and set the special field with your own data.
 
-####blk_end_request_all()
+blk_rq_pos() gets the first sector of the request.
+You can check include/linux/blkdev.h file that includes many helper functions to get information of the request, such as blk_rq_pos().
+You should not access the request data structure directly and use those helper functions, because the request data structure can be changed in any kernel version.
+Even-if the request data structure is changed, helper function will exists samely.
 
-request 처리가 끝났음을 커널에 알리는 함수입니다. request 객체를 커널이 생성했으니 커널에게 해지를 맡기는게 당연하겠지요. 인자로 request의 포인터와 에러 값을 받습니다. 에러는 대표적으로 -EIO등을 쓸 수 있겠고, 에러가 없다면 0을 전달하면 됩니다.
+The mybrd driver use rq_for_each_segment() to get each segment of the request.
+As I told you before, the request always includes sequential sectors.
+So actually we don't need to extract each segment with rq_for_each_segment.
+But I used rq_for_each_segment() because I just wanted to use already implemented sector-based routines for radix-tree.
+You can find a better way to process the request.
 
-###_mybrd_request_fn()
-
-request 한개를 받아서 처리하는 함수입니다. blk_fetch_request()에서 반환된 request는 mybrd_prep_rq_fn()에서 한번 처리된 request입니다. mybrd_prep_rq_fn()은 request의 special 필드에 mybrd 객체의 주소를 저장합니다. 그러니 _mybrd_request_fn()이 호출된 시점에서 request의 special 필드에 mybrd 객체가 저장되어있어야 하겠지요. 사실 이건 그냥 prep_rq_fn이라는게 있다는 것을 보여주기위한 코드입니다. 드라이버나 장치의 특성에 따라서 필요한 처리를 하면 되고, 필요없으면 생략해도 됩니다.
-
-blk_rq_pos()는 request에서 처리해야할 첫번째 섹터 번호를 알아내는 함수입니다. blk_rq_pos()가 정의된 include/linux/blkdev.h 파일을 열어보면 blk_rq_pos()외에도 request의 정보를 얻어내는 함수들이 많이 있습니다. request 구조체를 직접 접근하지말고 이런 helper 함수를 사용하는게 중요합니다. 왜냐면 request의 구조체 자체는 언제든지 바뀔 수 있기 때문입니다. request 구조체가 바뀌어도 helper함수의 결과값은 항상 동일하므로 request의 변화에 투명한 코드를 만들 수 있습니다.
-
-mybrd에서는 rq_for_each_segment()를 써서 세그먼트를 하나씩 열어서 처리합니다. 그런데 request는 연속된 섹터를 포함하고 있습니다. 따라서 rq_for_each_segment()를 쓰는 것보다 더 좋은 방법이 있을 것입니다. 하지만 mybrd에는 이미 섹터 단위로 페이지를 관리하도록 구현된 radix-tree가 있으므로 이걸 그대로 이용하기 위해 rq_for_each_segment()를 이용합니다. 세그먼트를 얻어온 다음에 radix-tree에 데이터를 넣고 빼는 코드는 bio-mode 코드와 동일합니다.
-
+Handling segment is the same to bio-mode processing that we already implemented in previous chapter.
 
 ## request handling in SOFTIRQ
 
-소스: https://github.com/gurugio/mybrd/blob/ch04-request-mode-softirq/mybrd.c
+source: https://github.com/gurugio/mybrd/blob/ch04-request-mode-softirq/mybrd.c
 
-irqmode라는걸 추가할 수 있는데 한번 만들어보겠습니다. 이전에는 커널이 호출한 즉시 request들을 처리했습니다. 예를들어서 진짜 하드디스크의 드라이버라면 디스크에서 이전 데이터의 처리가 끝났다는 인터럽트가 발생할때마다 새로운 request를 처리할 것입니다. 그런데 이렇게 인터럽트가 발생했을 때마다 request를 처리하는게 좋지만은 않습니다. request 처리를 인터럽트 핸들러에서 구현하려면 프로세스가 잠들어서도 안되고, 그러다보니 메모리 할당도 까다로워지는 등 여러가지 불편한점들이 많습니다.
+Let's add one more mode, so-called irq-mode.
+For request-mode, driver processes a request whenever user generates IO.
+It can be possible because mybrd driver stores data on memory, not real disk.
 
-따라서 이런 request 처리를 잠시 미뤘다가 하는 방법도 있습니다. 커널이 제공하는 softirq라는 지연 처리 메커니즘이 있고 이걸 활용해서 request 처리를 하는 방법입니다.
+If we should store data in real hard-disk, we could process the request when the disk generates interrupt to show previous IO handling is finished.
+Of course, we cannot process the request in the interrupt handler.
+Interrupt context has many limitation.
 
-softirq 자체에 대해서는 다음 문서를 참고하시기 바랍니다.
+Therefore we need a way to delay the request handling.
+That is the softirq mechanism.
+Please refer following document for the detail.
 
 https://lwn.net/Articles/520076/
 
-우리는 실제 코드를 보면서 이해해보겠습니다.
+I'll just introduce very simple example to help you understand how it works.
+If you cannot understand above document for softirq, please read this example first.
+Then you can understand softirq better.
 
-###blk_complete_request()
+### blk_complete_request()
 
-blk_cpu_done이라는 per-cpu 리스트가 있습니다. 드라이버에서 blk_complete_request()를 호출하면 해당 request를 blk_cpu_done 리스트에 추가해놓고 request_fn 함수를 종료합니다. 
+There is a per-cpu list, blk_cpu_done.
+If driver calls blk_complete_request() with a request, kernel adds the request into blk_cpu_done list.
 
-blk_cpu_done이라는게 뭔지 blk_cpu_done으로 코드를 검색해보면 blk_softirq_init() 함수에 리스트를 초기화하는게 보입니다. blk_softirq_init()함수는 blk_cpu_done 리스트를 만들고, BLOCK_SOFTIRQ를 등록합니다.
+If you want to know detail of blk_cpu_done, please check blk_softirq_init() function.
+It creates blk_cpu_done list and registers it as BLOCK_SOFTIRQ.
 
-그러면 나중에 softirq가 실행될 때 BLOCK_SOFTIRQ로 등록된 blk_done_softirq() 함수가 호출되고, blk_cpu_done 리스트에서 request를 꺼내서 큐에 있는 softirq_done_fn 함수를 호출합니다. 결국 이런 과정을 거쳐서 mybrd_softirq_done_fn() 함수가 호출되는 것입니다.
+Soon or later, when kernel executes softirq routines, blk_done_softirq() is called.
+blk_done_softirq() extracts reuqests from blk_cpu_done list and calls softirq_done_fn function pointer with the extracted request.
+The function pointer, softirq_done_fn, is pointer to mybrd_softirq_done_fn().
 
-###mybrd_softirq_done_fn()
+In other words, driver function mybrd_softirq_done_fn() is called only when kernel processes softirq routines.
+Before it, driver just delays the request handling.
 
-어짜피 하나의 request를 처리해야하는건 mybrd_request_fn과 동일합니다. mybrd_request_fn()에서 했듯이 _mybrd_request_fn()을 호출해서 IO를 처리합니다.
+### mybrd_softirq_done_fn()
 
-차이가 있다면 request의 queuelist를 초기화해서 큐로부터 request를 분리하는 것 뿐입니다. request 처리가 완료되었을 때 blk_end_request_all()을 호출하는 것도 mybrd_request_fn()과 동일합니다.
+The job of mybrd_softirq_done_fn() is the same to mybrd_request_fn().
+It processes one request.
+So mybrd_softirq_done_fn() also calls _mybrd_request_fn() for IO processing.
+
+Only one different thing is extracting the request from the request-queue: ``list_del_init(&req->queuelist);``
+The queuelist field of the request is the list node linked to the request-queue.
+
+Calling blk_end_request_all() is also same to other mode.
