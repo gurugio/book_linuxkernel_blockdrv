@@ -235,3 +235,8 @@ Only one different thing is extracting the request from the request-queue: ``lis
 The queuelist field of the request is the list node linked to the request-queue.
 
 Calling blk_end_request_all() is also same to other mode.
+
+# experiment
+
+I will not write how to test the request-mode because it's the same to the bio-mode.
+Please check which mode has better performance and what hahavior is different.
