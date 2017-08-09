@@ -107,18 +107,30 @@ Yes, kernel developers often choose wierd name.
 Please google why it is called as elevator just for fun.
 There should be a good reason.
 
-###blk_queue_bio()
+### blk_queue_bio()
 
-blk_init_queue_node()와 blk_alloc_queue_node()의 차이가 뭘까요. 바로 blk_queue_bio()를 호출하는 것입니다. 드라이버에서 큐를 만들때 blk_alloc_queue_node()로 생성하면 bio처리를 할 때 드라이버가 만든 함수가 호출됩니다. 하지만 blk_init_queue_node()로 큐를 만들면 커널이 제공하는 blk_queue_bio()함수가 bio 처리를 합니다.
+Calling blk_queue_bio() is only difference between blk_init_queue_node() and blk_alloc_queue_node().
+When driver creates the request-queue with blk_alloc_queue_node(), kernel calls the driver function for bio processing.
+But driver creates the request-queue with blk_init_queue_node(), kernel calls the kernel function, blk_queue_bio(), for bio processing.
 
-내친김에 blk_queue_bio() 함수도 열어볼까요. 조금 복잡하고 저도 다 아는게 아니므로 개론적인 것들만 설명하겠습니다. 우리가 이미 아는 함수들이 사용되고 있습니다. 뭔가 에러가 발생했으면 bio_endio()를 호출하고 끝냅니다. 중간을 보면 elv_merge()라는 함수가 처음으로 request 객체를 사용하고 있습니다. 그리고 바로 밑에 bio_attempt_back_merge()나 bio_attempt_front_merge() 함수를 호출합니다. 감이 오실겁니다. 큐에있는 bio들을 조사해서 현재 전달된 bio와 합치는 것입니다. 
+Let's check blk_queue_bio().
+It's a little long and complex, so let's read it briefly.
+It calls bio_endio() when error happens.
+Then it calls bio_attempt_back_merge() and bio_attempt_front_merge() to merge bios in the request-queue.
 
-그리고 get_request()함수로 새로운 request를 생성합니다. 하나의 큐가 가질 수 있는 request는 한계가 있습니다. 그 한계를 큐의 depth라고 부릅니다. 만약 큐에 request가 너무 많다면 이 get_request()함수는 프로세스를 잠들게합니다.
+get_request() function creates new request.
+There is a limit of number of requests in a request-queue.
+It is called as the depth of the request-queue.
+If there are more requests than the depth, get_request() make the process sleep.
 
-그 다음 plug라는게 사용되는데 이건 글이 너무 길어지므로 설명하지 않겠습니다. __blk_run_queue()함수가 최종적으로 큐에 등록된 request_fn 함수를 호출하는 함수입니다.
+There is a plug.
+I'll skip it because it's beyond of this document.
+Please refer other documents for block layer.
 
-아주 간략하게만 설명했습니다만 이전에 짧게만 설명했던 큐에서 bio들이 합쳐지는 과정이 어떻게 구현되고 언제 어떻게 드라이버가 등록한 request 처리 함수가 호출되는지 약간은 감이 오셨을거라 생각됩니다. 이제 Understanding the Linux kernel 등 본격적인 커널 책을 보시면 좀더 잘 이해가 되실 겁니다.
+Finally ``__blk_run_queue()`` function calls request_fn function which is the pointer to mybrd_request_fn().
 
+I skipped many details and show only brief flow.
+But I hope this can help you start in-depth investigation of kernel code and read other books like "Understanding the Linux kernel".
 
 ## request handling
 
