@@ -22,21 +22,32 @@ references
 * https://lwn.net/Articles/552904/
 * http://kernel.dk/blk-mq.pdf
 * http://ari-ava.blogspot.de/2014/07/opw-linux-block-io-layer-part-4-multi.html 
+* https://www.kernel.org/doc/Documentation/block/null_blk.txt
+  * The example source mybrd.c is a mimic of null_blk driver because null_blk driver is the simplest but best real-world driver based on multiqueue block layer.
 
-## 새로운 큐 만들기
+## create multiqueue-mode request-queue
 
-multiqueue-mode를 mq-mode라고 줄여서 부르겠습니다. mq-mode는 간단히말하면 여러개의 sw-queue (staging-queue라고도 부름)를 만드는 겁니다. 그리고 hw-queue도 여러개를 만듭니다.
+(Let's call multiqueue-mode as mq-mode.)
 
-Let's call multiqueue-mode as mq-mode.
+As the name show, multiple software-queue (aka. sw-queue or submission queue) and hardware-queue (aka. hw-queue) are created for mq-mode IO processing.
 
+Kernel creates sw-queues as many as the CPUs or nodes.
+The sw-queue receives IO from the user application.
+Each sw-queue works on its own CPU, so there is no lock racing and cache sync.
+And the sw-queue sends IO to hw-queues.
+Driver creates one or more hw-queues.
+If the driver is for old hard-disk, it would create only one hw-queue.
+But if the driver is for the state-of-the-art SSD that supports multi-channel, it would create several hw-queue.
+Finally driver generates multi-thread to extract the requests from multi hw-queue.
 
-sw-queue는 어플에서 전달된 IO의 request를 받습니다. 커널이 프로세서의 갯수만큼 생성합니다. 그리고 IO 스케줄러가 sw-queue에서 스케줄링을합니다. 지금까지 봤던 보통의 request-queue와 유사합니다. 그리고 이 sw-queue에서 hw-queue로  request를 전달합니다. hw-queue는 디스크 장치의 특성에 따라 한개가 될 수도 있고 여러개가 될 수도 있습니다. 하드웨어적으로 멀티 IO를 지원한다면 드라이버에서 여러개의 hw-queue를 만드는 것이고, 기존의 보통 하드디스크라면 하나의 hw-queue를 만듭니다. 그러면 커널이  sw-queue의 request를 hw-queue로 넘깁니다. 그리고 hw-queue에서는 드라이버의 request 처리 함수를 호출해서 request를 장치에 전달하도록 합니다.
+It's hard to describe.
+The best way to understand a mechanism is implementing it.
 
-말로는 복잡하니까 그냥 한번 만들어보겠습니다. mq-mode 에 대한 논문을 보신 분들은 아시겠지만 리눅스 커널에 null_blk라는 드라이버가 바로 mq-mode를 구현하면서 예제로 만든 드라이버입니다. 실제 장치가 없이 커널과 드라이버가 request를 처리하는 성능만 측정하도록 만들어진 드라이버라 논문을 쓰고 실험하는데 사용된 드라이버입니다. 따라서 null_blk 드라이버에서 핵심적인 코드만 가져와서 멀티큐로 동작하는 램디스크 드라이버를 만들어보겠습니다. 이 강좌를 읽고난 후에는 가장 최신 커널의 null_blk 드라이버 소스를 보는게 최신 커널 소스를 분석하는데 큰 도움이 될 것입니다.
+As you can see the paper, Linux Block IO: Introducing Multi-queue SSD Access on Multi-core Systems (http://kernel.dk/blk-mq.pdf), they developed null_blk driver to prove performance improvement of mq-mode.
+The null_blk driver works without real device so that it can shows performance improvement only of block layer.
+The mybrd driver applied core code of null_blk driver to make multi-queue based ramdisk.
 
-PS. 저도 공부하면서 만든 코드라 미흡한게 많습니다. 제가 빼먹은 코드나 부족한 설명이 있다면 댓글로 알려주세요. 보충하겠습니다.
-
-###mybrd_allod() 에 MYBRD_Q_MQ모드 추가하기
+### add mq-mode to mybrd_alloc()
 
 이전에 request-mode를 위한 큐를 만들기 위해 MYBRD_Q_RQ 모드를 만들었습니다. 이번에는 MYBRD_Q_MQ 모드를 추가합니다.
 
