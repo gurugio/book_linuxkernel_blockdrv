@@ -60,6 +60,11 @@ blk_mq_tag_set 객체는 커널이 큐를 관리할 때 사용할 데이터를 �
 * cmd_size: sw-queue에서 hw-queue로 request를 전달할때 같이 전달할 추가 정보의 크기
 * driver_data: hw-queue에게 드라이버가 전달할 데이터
 
+As we added the request-mode in previous chapter, we wil add mq-mode in this chapter.
+New value for mq-mode is MYBRD_Q_MQ.
+
+
+
 ####blk_mq_init_allocated_queue()
 
 최종적으로 큐를 생성하는 함수는 blk_mq_init_queue()입니다. 코드를 보면 이미 익숙한 blk_alloc_queue_node() 함수로 큐를 생성합니다. 그리고 blk_mq_init_allocated_queue() 함수로 큐를 초기화합니다. 이건 request-mode에서 큐를 만드는 것과 유사합니다.
