@@ -82,7 +82,7 @@ Following is some fields of the request-queue.
 * queue_ctx: pointer to blk_mq_ctx representing sw-queue
 * queue_hctxs: pointer to blk_mq_hw_ctx representing hw-queue
 * mq_map: matching policy between sw-queue and hw-queue
-* make_request_fn: pointer to the request handling function, initialized to blk_mq_make_request by blk_queue_make_request()
+* make_request_fn: pointer to the request handling function, initialized to blk_sq/mq_make_request by blk_queue_make_request()
 
 blk_mq_init_cpu_queues() initializes sw-queue and matches sw-queue and hw-queue by map_queue function of blk_mq_ops.
 blk_mq_init_hw_queues() initializes hw-queue and calls init_hctx function of blk_mq_ops.
