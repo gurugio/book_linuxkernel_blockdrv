@@ -79,29 +79,33 @@ The matching policy is the map_queue field of struct blk_mq_ops.
 Driver can make its own policy but mybrd uses default policy, blk_mq_map_queue, provided by kernel.
 
 Following is some fields of the request-queue.
-* queue_ctx: sw-queue에 대한 정보
-* queue_hctxs: hw-queue에 대한 정보
-* mq_map: sw-queue와 hw-queue가 어떻게 매칭될지에 필요한 정보. 예를 들어 2개의 sw-queue와 1개의 hw-queue가 만들어졌으면 모든 sw-queue의 request들이 하나의 hw-queue로 전달되야합니다. 2:2로 매칭될수도 있고, 4:1, 4:2 등등 드라이버가 결정하기 나름입니다. mq_map이 이런 매칭을 결정하는게 아니고 드라이버가 제공한 함수에서 결정하는데, mq_map은 그런 결정에 필요한 정보들을 가지고 있습니다. (디록트로 커널이 제공하는 함수도 있고 우리는 커널 함수를 쓰겠습니다.)
-* make_request_fn: blk_queue_make_request() 함수를 써서 hw-queue의 갯수에 따라 bio 처리 함수를 다르게 지정합니다.  
+* queue_ctx: pointer to blk_mq_ctx representing sw-queue
+* queue_hctxs: pointer to blk_mq_hw_ctx representing hw-queue
+* mq_map: matching policy between sw-queue and hw-queue
+* make_request_fn: pointer to the request handling function, initialized to blk_mq_make_request by blk_queue_make_request()
 
-그리고 마지막으로 blk_mq_init_hw_queues() 함수를 호출하는데, 여기에서 mybrd_mq_ops.init_hctx 콜백 함수가 호출됩니다. 각 hw-queue 를 초기화하는 함수입니다.
+blk_mq_init_cpu_queues() initializes sw-queue and matches sw-queue and hw-queue by map_queue function of blk_mq_ops.
+blk_mq_init_hw_queues() initializes hw-queue and calls init_hctx function of blk_mq_ops.
+Callback functions of blk_mq_ops is initialized by mybrd, so mybrd can initialize hw-queue and sw-queue for itself.
 
-blk_mq_init_queue() 함수로 sw-queue와 hw-queue를 초기화했으니 disk를 만듭니다. disk 생성은 큐와 상관없이 항상 동일합니다.
+#### blk_sq_make_request() and blk_mq_make_request()
 
-####blk_sq_make_request()
+Kernel initialized a bio processing function for the request-mode.
+For the request-mode, kernel calls the bio processing function to extract bios and merge them into a request.
+And then kernel calls the request handling function of driver.
 
-request-mode에서도 마찬가지로 커널이 request-queue의 bio 처리 함수를 지정했습니다. request-mode에서는 bio 처리 함수에서 스케줄러를 호출한 뒤에 드라이버가 제공한 request 처리 함수를 호출했습니다. mq-mode에서는 어떻게 bio가 처리되는지 blk_sq_make_request()를 통해 간단히 보겠습니다.
+The bio processing function the the mq-mode is blk_sq_make_request and blk_mq_make_request for single hw-queue and multi hw-queues respectively.
+Kernel extracts bio from the queue by blk_sq/mq_make_request() and make a request by blk_mq_map_request.
+Then kernel passes the request to hw_queue of driver with blk_mq_run_hw_queue().
 
-큐와 bio를 전달받는 것은 익숙합니다. 그 다음은 blk_mq_map_request()로 request를 만들고, blk_mq_run_hw_queue()로 hw_queue에서 드라이버로 request를 전달합니다.
-
-####blk_mq_map_request()
+#### blk_mq_map_request()
 
 현재 bio는 sw-queue에 있습니다. 그리고 blk_mq_map_request()함수에서 어떤 hw-queue로 넘겨질지를 결정합니다.
 
 blk_mq_map_request()함수는 q->mq_ops->map_queue() 함수를 호출합니다. 여기서 mq_ops는 드라이버가 초기화한 콜백 함수들을 가지고 있습니다. 드라이버 소스를 보면 mybrd_mq_ops.map_queue = blk_mq_map_queue 로 설정하고 있습니다. 드라이버가 직접 sw-queue와 hw-queue의 매칭을 결정하지않고 커널 함수에 위임했습니다.
 
 blk_mq_map_queue를 보겠습니다. 딱 한줄이네요.
-````
+```
 /*
  * Default mapping to a software queue, since we use one per CPU.
  */
@@ -110,13 +114,13 @@ struct blk_mq_hw_ctx *blk_mq_map_queue(struct request_queue *q, const int cpu)
     return q->queue_hw_ctx[q->mq_map[cpu]];
 }
 EXPORT_SYMBOL(blk_mq_map_queue);
-````
+```
 
 cpu는 현재 코드가 실행중인 cpu입니다. queue_hw_ctx는 드라이버가 요청한 hw-queue 갯수만큼 blk_mq_hw_ctx 객체를 만들 것입니다. 따라서 q->mq_map 배열이 cpu 번호와 hw-queue의 번호를 연결해주는 역할을 하고 있네요. 물론 커널 함수를 안쓰고 드라이버가 직접 만든 함수를 써도 됩니다. 특정 CPU와 특정 hw-queue를 묶고 싶을때는 직접 매칭 함수를 만들면 되겠지요. 커널 함수는 단지 공평한 분산만을 생각합니다.
 
 blk_mq_map_request()를 계속 보면 __blk_mq_alloc_request()를 호출해서 request 객체를 만듭니다.
 
-####blk_mq_run_hw_queue
+#### blk_mq_run_hw_queue
 
 blk_mq_map_request() 함수는 결국 bio를 포함하는 request를 만들고 request가 어떤 hw-queue로 가야할지를 결정하는 함수였습니다. 그럼 이제 request를 hw-queue로 보내야겠지요. blk_mq_run_hw_queue()함수가 sw-queue에 있는 request를 hw-queue로 전달합니다.
 
