@@ -63,14 +63,22 @@ Following is field of the blk_mq_tag_set that driver should initialize.
 * cmd_size: size of driver specific information that will be passed along with the request
 * driver_data: driver specific information for hw-queue
 
-####blk_mq_init_allocated_queue()
+#### blk_mq_init_allocated_queue()
 
-최종적으로 큐를 생성하는 함수는 blk_mq_init_queue()입니다. 코드를 보면 이미 익숙한 blk_alloc_queue_node() 함수로 큐를 생성합니다. 그리고 blk_mq_init_allocated_queue() 함수로 큐를 초기화합니다. 이건 request-mode에서 큐를 만드는 것과 유사합니다.
+The multiqueue-based queue is created by blk_mq_init_queue() function.
+Let's read the code of blk_mq_init_queue() briefly.
 
-blk_mq_init_allocated_queue()는 큐를 초기화하는데, 여기서 큐는 sw-queue와 hw-queue 모두를 말합니다. 모든 큐와 각 큐가 어떻게 매칭이 될지, 각 큐들에 대한 정보 등등을 request_queue 객체를 만들어서 관리합니다.
+First it creates a queue with blk_alloc_queue_node() and initializes the queue with blk_mq_init_allocated_queue().
+When blk_mq_init_allocated_queue() initializes the queue, both of sw-queues and hw-queues are initialized.
+There are two data-structures, blk_mq_hw_ctx and blk_mq_ctx.
+Objects of blk_mq_hw_ctx are created as many as specified by driver variable hw_queue_depth.
+And objects of blk_mq_ctx are created as many as cores in the system, by alloc_percpu() function.
+If there are many sw-queues and many hw-queues, blk_mq_init_allocated_queue() decides matching between sw-queues and hw-queues.
+If there is only one hw-queue, all sw-queue should be matched to one hw-queue.
+The matching policy is the map_queue field of struct blk_mq_ops.
+Driver can make its own policy but mybrd uses default policy, blk_mq_map_queue, provided by kernel.
 
-다음은 request_queue의 필드입니다.
-
+Following is some fields of the request-queue.
 * queue_ctx: sw-queue에 대한 정보
 * queue_hctxs: hw-queue에 대한 정보
 * mq_map: sw-queue와 hw-queue가 어떻게 매칭될지에 필요한 정보. 예를 들어 2개의 sw-queue와 1개의 hw-queue가 만들어졌으면 모든 sw-queue의 request들이 하나의 hw-queue로 전달되야합니다. 2:2로 매칭될수도 있고, 4:1, 4:2 등등 드라이버가 결정하기 나름입니다. mq_map이 이런 매칭을 결정하는게 아니고 드라이버가 제공한 함수에서 결정하는데, mq_map은 그런 결정에 필요한 정보들을 가지고 있습니다. (디록트로 커널이 제공하는 함수도 있고 우리는 커널 함수를 쓰겠습니다.)
