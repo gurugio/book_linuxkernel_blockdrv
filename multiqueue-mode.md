@@ -49,21 +49,19 @@ The mybrd driver applied core code of null_blk driver to make multi-queue based 
 
 ### add mq-mode to mybrd_alloc()
 
-이전에 request-mode를 위한 큐를 만들기 위해 MYBRD_Q_RQ 모드를 만들었습니다. 이번에는 MYBRD_Q_MQ 모드를 추가합니다.
+As we added MYBRD_Q_RQ value for the request-mode, MYBRD_Q_MQ value is added for the mq-mode.
+blk_mq_tag_set data struct is for kernel to manage the request-queue.
+Driver decides how many hw-queues will be created because driver know the HW.
+If HW supported two channel IO processing, driver would create two hw-queues.
+And driver stores the number of hw-queue and other information into blk_mq_tag_set object.
 
-blk_mq_tag_set 객체는 커널이 큐를 관리할 때 사용할 데이터를 표현한것입니다. 드라이버버가 하드웨어 장치를 잘 알기때문에 hw-queue를 몇개 만들지를 결정할 수 있습니다. 따라서 blk_mq_tag_set 객체를 초기화할때 몇개의 hw-queue를 만들지 등 드라이버가 결정할 정보들을 전달합니다. 그 외에 어떤 필드들을 초기화해야할지는 blk_mq_tag_set을 인자로받는 blk_mq_alloc_tag_set() 코드를 보면 확인이 될것입니다.
-
-* ops: request-queue의 동작을 위한 함수들
-* nr_hw_queues: hw-queue의 갯수
-* queue_depth: hw-queue가 최대 가질 수 있는 request의 갯수
-* numa_node: hw-queue 등 커널이 필요한 객체들을 할당할 NUMA 노드의 번호
-* cmd_size: sw-queue에서 hw-queue로 request를 전달할때 같이 전달할 추가 정보의 크기
-* driver_data: hw-queue에게 드라이버가 전달할 데이터
-
-As we added the request-mode in previous chapter, we wil add mq-mode in this chapter.
-New value for mq-mode is MYBRD_Q_MQ.
-
-
+Following is field of the blk_mq_tag_set that driver should initialize.
+* ops: operation function of the multiqueue-based request-queue
+* nr_hw_queues: the number of the hw-queues
+* queue_depth: maximum number of the request each hw-queue can have
+* numa_node: NUMA node number from which kernel allocate memory for hw-queue and etc
+* cmd_size: size of driver specific information that will be passed along with the request
+* driver_data: driver specific information for hw-queue
 
 ####blk_mq_init_allocated_queue()
 
