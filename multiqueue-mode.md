@@ -105,6 +105,12 @@ Then kernel passes the request to hw_queue of driver with blk_mq_run_hw_queue().
 blk_mq_map_request()함수는 q->mq_ops->map_queue() 함수를 호출합니다. 여기서 mq_ops는 드라이버가 초기화한 콜백 함수들을 가지고 있습니다. 드라이버 소스를 보면 mybrd_mq_ops.map_queue = blk_mq_map_queue 로 설정하고 있습니다. 드라이버가 직접 sw-queue와 hw-queue의 매칭을 결정하지않고 커널 함수에 위임했습니다.
 
 blk_mq_map_queue를 보겠습니다. 딱 한줄이네요.
+
+When bio is in sw-queue, blk_mq_map_request() function allocates a request for the bio and decides what hw-queue will receive the request via q->mq_ops->map_queue().
+mp_ops has callback functions provided by driver object mybrd_mq_ops.
+mybrd driver sets mybrd_mq_ops.map_queue to blk_mq_map_queue.
+
+
 ```
 /*
  * Default mapping to a software queue, since we use one per CPU.
