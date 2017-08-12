@@ -100,17 +100,12 @@ Then kernel passes the request to hw_queue of driver with blk_mq_run_hw_queue().
 
 #### blk_mq_map_request()
 
-현재 bio는 sw-queue에 있습니다. 그리고 blk_mq_map_request()함수에서 어떤 hw-queue로 넘겨질지를 결정합니다.
-
-blk_mq_map_request()함수는 q->mq_ops->map_queue() 함수를 호출합니다. 여기서 mq_ops는 드라이버가 초기화한 콜백 함수들을 가지고 있습니다. 드라이버 소스를 보면 mybrd_mq_ops.map_queue = blk_mq_map_queue 로 설정하고 있습니다. 드라이버가 직접 sw-queue와 hw-queue의 매칭을 결정하지않고 커널 함수에 위임했습니다.
-
-blk_mq_map_queue를 보겠습니다. 딱 한줄이네요.
-
 When bio is in sw-queue, blk_mq_map_request() function allocates a request for the bio and decides what hw-queue will receive the request via q->mq_ops->map_queue().
 mp_ops has callback functions provided by driver object mybrd_mq_ops.
 mybrd driver sets mybrd_mq_ops.map_queue to blk_mq_map_queue.
+So kernel decides how sw-queue and hw-queue are matched.
 
-
+Let's see the code of blk_mq_map_queue().
 ```
 /*
  * Default mapping to a software queue, since we use one per CPU.
@@ -122,9 +117,16 @@ struct blk_mq_hw_ctx *blk_mq_map_queue(struct request_queue *q, const int cpu)
 EXPORT_SYMBOL(blk_mq_map_queue);
 ```
 
-cpu는 현재 코드가 실행중인 cpu입니다. queue_hw_ctx는 드라이버가 요청한 hw-queue 갯수만큼 blk_mq_hw_ctx 객체를 만들 것입니다. 따라서 q->mq_map 배열이 cpu 번호와 hw-queue의 번호를 연결해주는 역할을 하고 있네요. 물론 커널 함수를 안쓰고 드라이버가 직접 만든 함수를 써도 됩니다. 특정 CPU와 특정 hw-queue를 묶고 싶을때는 직접 매칭 함수를 만들면 되겠지요. 커널 함수는 단지 공평한 분산만을 생각합니다.
+cpu value has the core number on which the current thread is executed.
+queue_hw_ctx is an array of blk_mq_hw_ctx objects.
+The size of array is specified by driver.
+q->mq_map is an array of the number of hw_queue.
+If q->mq_map array is {0,0,0,0}, there are 4 sw-queues and 1 hw-queue. 
+All are matched to hw-queue 0.
+If q->mq_map array is {0,0,1,1}, there are 4 sw-queues and 2 hw-queues.
+{0,1} sw-queue are matched to hw-queue {0,0} and 2,3 sw-queues are matched to {1,1}.
 
-blk_mq_map_request()를 계속 보면 __blk_mq_alloc_request()를 호출해서 request 객체를 만듭니다.
+Of course, you can make your own policy.
 
 #### blk_mq_run_hw_queue
 
