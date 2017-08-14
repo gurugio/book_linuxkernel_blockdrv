@@ -16,9 +16,11 @@ I hope this chapter would help you understand the code of the page cache.
 
 ## test the page cache
 
-페이지캐시가 뭔지 알아보기 위해 약간의 실험을 해보겠습니다. 
+Let's do some test to understand what the page cache is.
 
-우선 mybrd를 실험했던 커널을 다시 부팅합니다. 당연히 mybrd 드라이버도 포함되겠지요. 부팅하자마자 첫번째로 실행할 명령은 free -k 와 cat /proc/zoneinfo | grep file_pages 입니다.
+First please boot the kernel including mybrd.
+And run "free -k" and "cat /proc/zoneinfo | grep file_pages" commands like following.
+
 ```
 / # cat /proc/zoneinfo | grep file_pages
     nr_file_pages 0
