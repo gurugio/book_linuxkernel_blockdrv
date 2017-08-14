@@ -33,24 +33,27 @@ Swap:            0          0          0
 
 ```
 
-free 명령은
+free command shows
 
-* total: 총 메모리
-* used: 사용중인 메모리
-* free: 남은 메모리
-* shared: 공유 메모리
-* buffers: 파일시스템 자체를 관리하는 메타데이터
-* cached: 파일의 내용을 메모리에 캐시하는 페이지캐시
+* total: total memory
+* used: used memory
+* free: free memory
+* shared: shared memory
+* buffers: used memory for metadata of filesystem
+* cached: used memory for file data of filesystem
 
-free 명령에서 buffers와 cached의 차이가 뭔지 저도 많이 헷갈렸었는데 검색해도 설명들이 애매했었습니다. 그런데 레드햇 사이트에 설명이 잘 되있네요.
-
+I had not known exactly what is different between buffer and cached fields.
+I found good description at:
 http://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Tuning_and_Optimizing_Red_Hat_Enterprise_Linux_for_Oracle_9i_and_10g_Databases/chap-Oracle_9i_and_10g_Tuning_Guide-Memory_Usage_and_Page_Cache.html
 
-우리는 페이지캐시에 관심이있으니 cached 값만 보도록 하겠습니다. 현재 cached 페이지의 크기가 3864k 입니다. -k 옵션은 kilobyte로 출력하라는 옵션입니다. -m을하면 megabyte로 나오겠지요.
+We are discussing file cache, so let's look into cached value.
+Current cached value is 3864k because -k option prints information in kilobyte unit.
 
-/proc/zoneinfo는 각 zone에서 얼마만큼의 메모리에 어디에 사용되고 있는지를 보여주는 것입니다. 여기에서 페이지캐시는 nr_file_pages 항목에 해당됩니다. 나중에 커널 코드를 볼때 nr_file_pages 항목을 업데이터하는 코드가 나올 것입니다.
+``/proc/zoneinfo`` file shows status of each zone.
+There are many fields but we look at nr_file_pages field which shows the amount of the page cache of each zone.
 
-이상태에서 mybrd에서 파일로 데이터를 옮겨보겠습니다. 드라이버에서 파일로 데이터를 옮기는 것이므로 어플 입장에서는 읽기에 해당합니다.
+Let's pass some data from mybrd disk to file.
+
 ```
 / # dd if=/dev/mybrd of=./big
 [  120.253239] mybrd: start mybrd_make_request_fn: block_device=ffff880006194340 mybrd=ffff8800065ab240
@@ -58,7 +61,7 @@ http://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/5/html/Tun
 [  120.254408] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS Ubuntu-1.8.2-1ubuntu1 04/01/2014
 
 
-------------------- 생략
+------------------- skip
 
 4194304 bytes (4.0MB) copied, 1.999599 seconds, 2.0MB/s
 / # 
@@ -71,11 +74,27 @@ Mem:        114160      25572      88588       7960          0       7960
 -/+ buffers/cache:      17612      96548
 Swap:            0          0          0
 ```
-dd 명령을 실행하면 mybrd 디스크의 크기가 4MB이므로 총 4.0MB의 복사가 발생합니다. free 명령을 실행해보면 cached의 값이 4096K 증가된걸 볼 수 있습니다. 정말 정확하게 4MB의 데이터가 디스크에서 메모리로 복사된 것입니다. 바로 이렇게 장치의 데이터를 메모리로 복사해놓는게 페이지캐시입니다. 사실 파일을 만든다는 것은 그 파일이 저장되어있는 디스크에 공간을 할당하고, 디스크에 데이터를 저장한다는 것입니다. 그런데 파일을 만들때마다 디스크에 IO가 발생한다면 디스크의 성능이 곧 컴퓨터의 성능이 될 수 있습니다. 하지만 이렇게 메모리에 보관해놓는다면 디스크보다 메모리가 더 빠르니 컴퓨터 전체의 성능이 더 빨라지겠지요. 메모리에 있는 데이터는 나중에 컴퓨터가 한가할때 디스크에 쓰면, 사용자는 알아차리지도 못할 것입니다.
 
-zoneinfo 파일에서 nr_file_pages 항목을 볼까요. 2개의 zone이 있으므로 2개의 값이 나타났는데 어쨌든 총 증가된걸 따지면 1024가 됩니다. 이건 페이지의 갯수이므로 곧 4MB라는 의미입니다.
+dd command generates 4MB data because mybrd disk size is 4MB.
+After executing dd, we can check cached value is increased by 4096K.
+It means 4MB data is copied from the disk into memory.
+The data in memory is the page cahe.
 
-이번에는 파일을 파일로 복사해보겠습니다.
+When we creates a file, we think a file is created in a disk.
+But if a file is created in a disk whenever we creates a file, there should be so many IOs and disk has too much load.
+Then system performance would be so poor because disk has the worst performance (even-if it is ssd).
+But the page cache layer stores data into memory, not the disk.
+So user application can response quickly and system throughput performance becomes better.
+When system is idle, the page cache layer writes data into the disk.
+User couldn't notice anything.
+
+Let's check nr_file_pages field in zoneinfo.
+My system has two zones, so there are two nr_file_pages fields.
+Total increase of two nr_file_pages is 1024.
+This field is in page unit, so 1024 means 4096MB.
+
+Let's copy the file into another file.
+
 ```
 / # dd if=./big of=./big2
 
