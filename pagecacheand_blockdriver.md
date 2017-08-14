@@ -1,4 +1,4 @@
-# pagecache_and_blockdriver
+# pagecache and blockdriver
 
 운영체제나 커널을 조금만 공부해보셨다면 드라이버 실험을 하면서 약간은 개운하지 못한 느낌적인 느낌이 있으실겁니다. 바로 페이지 캐시때문이지요. 사실 어플에서 명령한 모든 IO는 바로 드라이버로 전달되는게 아니고, 페이지 캐시 레이어가 중간에서 버퍼 역할을 합니다.
 
@@ -7,6 +7,17 @@
 어플 -> (커널레벨진입) -> 파일시스템 -> 페이지캐시 -> 블럭레이어 -> 드라이버 -> 물리장치
 
 아주 간략하게본 것이지만 어쨌든 드라이버를 공부해봤으니, 이제 한단계 업그레이드를 해서 페이지 캐시와 블럭레이어도 간단하게 분석해보겠습니다.
+
+When we tested mybrd driver, something interrupted IOs and driver couldn't get IOs from kernel directly.
+It was the page cache.
+The page cache acts like a buffer.
+It intercepts IOs and stores data in memory.
+When free memory becomes low, kernel releases data into driver and makes more free memory.
+
+Roughlt there are several layers between user allocation and device.
+* app -> system call (user-level) | (kernel-level) filesystem -> page cache -> block layer -> driver -> device
+
+Let's look into the page cache and block layer
 
 ## 페이지캐시 실험
 페이지캐시가 뭔지 알아보기 위해 약간의 실험을 해보겠습니다. 
