@@ -130,40 +130,41 @@ Of course, you can make your own policy.
 
 #### blk_mq_run_hw_queue
 
-blk_mq_map_request() 함수는 결국 bio를 포함하는 request를 만들고 request가 어떤 hw-queue로 가야할지를 결정하는 함수였습니다. 그럼 이제 request를 hw-queue로 보내야겠지요. blk_mq_run_hw_queue()함수가 sw-queue에 있는 request를 hw-queue로 전달합니다.
+blk_mq_map_request() creates a request and decides which hw-queue will take the request.
+blk_mq_run_hw_queue() transfers the request from sw-queue to hw-queue.
 
-blk_mq_run_hw_queue()는 결국 __blk_mq_run_hw_queue()를 호출합니다. hw-queue는 사실상 하는 일이 없습니다. 그냥 드라이버의 mybrd_mq_ops.queue_rq 포인터를 읽어서 함수를 호출하는 것이 대부분입니다. 당연히 mybrd_mq_ops.queue_rq 함수는 request를 받아서 장치를 읽고 쓰는 일을 해야겠지요. 그 일은 request-mode에서와 동일할 것입니다.
+Actually blk_mq_run_hw_queue only calls callback function of driver, for instance mybrd_mq_ops.queue_rq of mybrd driver.
+Request processing is done by driver that is the same for request-mode and bio-mode.
 
-##hw-queue를 구현하는 mybrd_mq_ops의 각 함수들
+## callback functions in mybrd_mq_ops implementating hw-queue
 
-드라이버가 큐를 만들때 등록한 함수들이 mybrd_mq_ops에 있습니다. 하나씩 보겠습니다.
+Let's check what callback functions in mybrd_mq_ops.
 
-###mybrd_init_hctx
+### mybrd_init_hctx
 
-이름처럼 hw-queue를 초기화할때 호출됩니다. 인자로 받는 blk_mq_hw_ctx 포인터는 각 hw-queue마다 생성되는 blk_mq_hw_ctx 객체의 주소입니다.
+As the name shows, it initializes hw-queue.
+An argument for blk_mq_hw_ctx is a ponter to blk_mq_hw_ctx object of each hw-queues.
+An argument for data is a pointer to mybrd object stored in tag_set.driver_data.
+And index is the hw-queue number.
+mybrd driver creates only one hw-queue, so index should be 0.
 
-인자값 data는 tag_set.driver_data로 전달한 mybrd 객체의 주소입니다. 그리고 index는 hw-queue의 번호입니다. 우리는 hw-queue를 하나만 만들었으니 0일 것입니다.
+mybrd driver pass a object of struct mybrd_hw_queue_private to the hw-queue.
+It contains a queue number and address of mybrd object.
 
-드라이버가 각 hw-queue에 전달할 정보는 struct mybrd_hw_queue_private객체입니다. 별다른건 없고 큐의 번호와 mybrd객체의 주소를 전달합니다.
+### mybrd_queue_rq
 
-hctx->driver_data필드에 mybrd_hw_queue_private객체의 주소를 저장하고 종료합니다.
+A pointer to the request is stored at blk_mq_queue_data->rq.
+And blk_mq_rq_to_pdu() returns a specific data of each requests.
+The size of the request specific data is specified by tag_set.cmd_size value.
 
-###mybrd_queue_rq
-***아직 완성되지 않은 내용***
+Processing a request is the same to the request-mode.
 
-함수 인자로 blk_mq_hw_ctx를 받는 것은 이해가 되실 것입니다. blk_mq_queue_data는 사실 아직 뭔지 잘 모르겠습니다. 단지 blk_mq_queue_data->rq 필드에 request의 포인터가 저장돼있다는 것만 알고있습니다.
+### mybrd_softirq_done_fn
 
-그리고 blk_mq_rq_to_pdu() 함수를 써서 request마다 고유한 드라이버 정보를 저장하고 있습니다. 이 정보의 크기는 tag_set.cmd_size에 설정한 값입니다. 아직 pdu가 무엇의 약자인지 드라이버가 이 영역을 맘대로 덮어써도 되는지는 파악이 안됐습니다.
+Request handling of softirq mode also is the same to softirq mode of the request-mode.
 
-그 외에는 request를 처리하는 것 뿐입니다. request-mode와 동일한 방식으로 처리합니다.
+## Kernel booting
 
-
-
-###mybrd_softirq_done_fn
-
-softirq 모드로도 request처리를 구현할 수 있습니다. 방식은 request-mode와 동일하므로 따로 구현하지 않았습니다.
-
-##커널 부팅 실험
 ```
 [    0.298833] mybrd: start init_hctx: hctx=ffff88000643c400 mybrd=ffff88000771c600 priv[0]=ffff880006871eb0
 [    0.299741] mybrd: info hctx: numa_node=0 queue_num=0 queue->ffff880007750000
@@ -272,12 +273,10 @@ softirq 모드로도 request처리를 구현할 수 있습니다. 방식은 requ
 [    0.347905] mybrd: 0 0 0 0 0 0 0 0
 [    0.348176] mybrd: end queue_rq
 ```
-부팅을 해보겠습니다. mybrd_init_hctx() 가 호출되었네요. hw-queue 번호가 0번인게 확인됐습니다.
 
-그리고 디스크가 추가되니 커널이 어떤 디스크인가하고 읽어봤네요. request가 2개 발생했습니다. 각각 priv가 init_hctx()에서 설정한 값인지 확인해보니 맞네요. init_hctx()에서 제대로 hw-queue를 설정했음을 알 수 있습니다. request처리 자체는 request-mode와 동일하니 자세히 볼 필요는 없습니다.
+In the booting log, we can see mybrd_init_hctx() was called with hw-queue number 0.
+When a disk was added, kernel generates two requests to check the disk.
+init_hctx() set the priv value as ffff880006871eb0 and each request has priv value ffff880006871eb0.
+So we can confirm that the requests are handled by the hw-queue that is initialized by init_hctx().
 
-mkfs.vfat이나 dd 툴을 써서 테스트해보는 것은 별로 새로운게 없으니 각자 해보시기 바랍니다.
-
-PS. 한가지 아쉬운건 request가 여러 sw-queue중 어느 큐에서 온건지를 알아보고싶은데, request에서 어느 필드를 봐야할지 잘 모르겠습니다. 이제 막 읽기 시작했으니 좀더 봐야지요.
-
-
+Please run other tools, dd and mkfs.ext4, to test mybrd disk.
