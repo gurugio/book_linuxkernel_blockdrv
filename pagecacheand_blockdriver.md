@@ -6,7 +6,7 @@ The page cache acts like a buffer.
 It intercepts IOs and stores data in memory.
 When free memory becomes low, kernel releases data into driver and makes more free memory.
 
-Roughlt there are several layers between user allocation and device.
+Roughly there are several layers between user allocation and device.
 * app -> system call (user-level) | (kernel-level) filesystem -> page cache -> block layer -> driver -> device
 
 Let's look into the page cache roughly.
@@ -139,13 +139,16 @@ The second line of the result of free command shows another used and free value 
 (80372 + 12056 = 92428 and 33788 - 12056 = 21732)
 So the second line shows the maximum free and minimum used memory size that system would be able to have.
 
-드라이버가 할당한 메모리는 드라이버가 스스로 반납하지않는한 계속 사용중인 메모리입니다. 드라이버가 시스템 전체의 메모리가 부족한지 알 방법도 없고 알 이유도 없습니다. 드라이버는 자기 동작만 확실하게 하면 되기때문에 드라이버가 할당한 메모리를 회수할 방법이 없습니다. (있긴 있습니다만 예외적인 것이니까요.) 그래서 used로 구분합니다.
+Memory allocated by the driver will exist until the driver frees it.
+Driver cannot release the memory temporarily because there is not any backup.
+So driver memory is identified as used.
 
-참고로 커널이 할당하는 페이지는 페이지 속성중에 unmovable 속성을 가집니다. compaction을 해서 연속된 메모리를 확보할때 페이지 데이터를 옮기는데 함부로 옮길 수 없기 때문입니다. 드라이버가 어떤 데이터의 물리 주소를 사용하고 있는데, 커널이 이 데이터를 옮겨버리면 물리 주소가 바껴버리고, 드라이버는 바뀌기전의 물리 주소를 참조하게 되니 엉뚱한 메모리에 접근하게되니까요.
+There are several properties for a page.
+A page allocated by driver or kerne has unmovable property, while a page allocated for user process has movable property.
+Compaction can move only movable pages.
+Amounts of movable and unmovable page are shown in /proc/pagetypeinfo file as following.
+Please refer other documents for the detail about movable page and compaction.
 
-어플에게 할당된 페이지는 movable입니다. 어플은 가상 주소를 사용하므로 페이지의 데이터를 옮기더라도 어플의 페이지 테이블의 물리 주소만 바꿔주면 어플은 계속 같은 가상 주소로 바뀐 메모리를 접근할 수 있으니까, 페이지가 옮겨질 수 있습니다.
-
-현재 시스템의 페이지들이 얼마나 movable이냐 unmovable이냐 등은 /proc/pagetypeinfo로 확인할 수 있습니다. 위에서 실험한 내용을 다시 해보면서 /proc/zoneinfo뿐 아니라 /proc/pagetypeinfo의 내용도 어떻게 변하는지 확인해보세요.
 ```
 / # cat /proc/pagetypeinfo 
 Page block order: 9
@@ -165,7 +168,9 @@ Number of blocks type     Unmovable      Movable  Reclaimable   HighAtomic
 Node 0, zone      DMA            3            3            2            0 
 Node 0, zone    DMA32           10           42            4            0 
 ```
-##패이지 캐시 관리를 위한 데이터 구조 struct address_space
+
+## struct address_space for the page cache management
+
 페이지캐시를 관리하는 데이터 구조체는 struct address_space입니다. 이 구조체의 객체는 가장 먼저 inode의 i_mapping 필드에 저장됩니다. inode는 파일시스템에서 생성하겠지요. 우리가만든 mybrd 드라이버는 디스크를 등록하면 장치 파일이 생성됩니다. 이때 파일이 생성된다는 것은 곧 inode도 생성된다는 것입니다. 디스크를 등록하는 add_disk 함수의 어딘가에 inode를 생성하는 코드가 숨어있습니다. 그리고 디스크의 장치 파일의 inode->i_mapping 필드는 모두 def_blk_aops가 저장됩니다.
 
 파일이 열릴때 open 시스템 콜에서 inode의 address_space 객체가 file의 f_mapping 필드에 inode의 i_mapping값을 저장합니다. 그리고나면 read/write 등 모든 시스템 콜에서 사용하는 file 객체에 address_space 객체가 사용되는 것이지요. inode는 파일이 열릴때만 참조되고, 그 이후로는 항상 file 객체만 사용됩니다. 그래서 같은 파일을 여러번 열 수 있고, 공유할 수 있는 것입니다.
