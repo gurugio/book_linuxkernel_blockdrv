@@ -110,9 +110,11 @@ Mem:        114160      29512      84648      12056          0      12056
 -/+ buffers/cache:      17456      96704
 Swap:            0          0          0
 ```
+A new 4MB file is created.
+And the page cache is also increased by 4MB.
 
-새로 4MB의 파일이 생성되었습니다. 마찬가지로 페이지캐시가 4MB 늘어났습니다.
-그럼 파일에서 mybrd 장치로 데이터를 써볼까요.
+Now let's write the file data into mybrd disk.
+
 ```
 / # dd if=./big of=/dev/mybrd/ 
 
@@ -122,13 +124,20 @@ Mem:        114160      33788      80372      12056          0      12056
 -/+ buffers/cache:      21732      92428
 Swap:            0          0          0
 ```
-파일의 데이터는 이미 메모리에 있는 데이터입니다. 따라서 파일 데이터를 장치에 써봐야 페이지캐시의 크기는 늘어나지 않습니다.
+Writing the page cache (file data) into disk does not release the page cache, so cached value is not changed.
+But used value is increased by 4276KB, because mybrd driver allocates pages to store data and some memory to manage radix-tree, such as the tree node.
 
-그런데 used의 값이 증가했습니다. 왜냐면 mybrd 드라이버가 데이터를 저장하기위해 페이지 할당을 했기 때문입니다. 4276KB가 증가했네요. 데이터를 보관하기위한 페이지뿐 아니라, 그 페이지를 관리하기위한 메타데이터도 증가했기 때문입니다. radix-tree에 페이지가 추가되면 트리 노드도 만들어져야하니까요.
+Even-if mybrd was a real disk, mybrd driver allocated memory to manage the disk and used value would be increased.
+Why is the memory of driver counted as used and file data counted as cached?
 
-그럼 장치 드라이버가 쓴 메모리는 왜 used가 되고 파일에 쓴 메모리는 cached가 될까요.
-
-파일에 쓴 메모리는 나중에 시스템에 메모리가 부족해지면 메모리의 데이터를 디스크에 저장하고, free 메모리로 쓸 수 있습니다. 그래서 cached로 구분하는 것입니다. free 명령의 두번째 라인에 -/+ buffers/cache 값을 보면 used와 free에서 버퍼/캐시를 뺀 값을 보여줍니다. 메모리가 부족해지면 페이지캐시를 제거할 수 있으므로 최대 92428KB의 메모리를 확보할 수 있다는걸 보여주는 것입니다.
+File data can be released when system run out of memory because kernel can read the file later when user access it.
+Original data of the file exists in the disk.
+So we can memory for buffering of the file.
+If kernel releases the file data, cached will be decreased and free will be increased.
+Therefore file data is counted specially as cached.
+The second line of the result of free command shows another used and free value after releasing cached memory.
+(80372 + 12056 = 92428 and 33788 - 12056 = 21732)
+So the second line shows the maximum free and minimum used memory size that system would be able to have.
 
 드라이버가 할당한 메모리는 드라이버가 스스로 반납하지않는한 계속 사용중인 메모리입니다. 드라이버가 시스템 전체의 메모리가 부족한지 알 방법도 없고 알 이유도 없습니다. 드라이버는 자기 동작만 확실하게 하면 되기때문에 드라이버가 할당한 메모리를 회수할 방법이 없습니다. (있긴 있습니다만 예외적인 것이니까요.) 그래서 used로 구분합니다.
 
