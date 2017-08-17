@@ -370,18 +370,17 @@ EXPORT_SYMBOL(__vfs_read);
 
 We cannot find out which is called, file->f_ops->read or new_sync_read() with only reading ``__vfs_read``.
 
-커널은 인터페이스 디자인을 매우 신경써서 구현합니다. 왜냐면 파일시스템 개발자와 페이지 캐시 개발자가 다르고, 페이지 캐시 개발자와 블럭 레이어 개발자가 다르기 때문입니다. 그냥 다른게 아니라 나라도 다르고, 일하는 시간대도 다르고, 소속도 다르고, 같은건 커널을 개발한다는 것 뿐인 개발자들이 함께 개발하는 코드이므로 모듈화를 잘해야하고 인터페이스 정의도 매우 깐깐하게 합니다. 그래야 서로 다른 레이어/모듈간에 독립적으로 개발될 수 있겠지요. 만약 이쪽에서 개발한걸 다른쪽에서 그대로 써야한다면 수많은 개발자들이 서로의 결과물을 기다리다가 데드락이 걸릴 것입니다.
+Kernel developers designes interface between each layer very carefully becasue each layer is developed by different group of developers.
+And each group consts of many developers from different countries, different time zones and different languages.
 
-그래서 커널 소스를 보면 수많은 콜백함수들을 보게됩니다. 그럴때마다 코드를 처음 분석하는 입장에서는 막막할 때가 많습니다. 제가 주로 쓰는 방법은 구조체 이름으로 검색해보는 것입니다. struct file_operations타입의 객체를 어디선가 정적으로 정의하고 있기때문에 file 구조체에서 가져다쓰고있는 것이겠지요. 그러니 일단 커널 소스 전체에서 struct file_operations를 한번 검색해보는 것입니다. 그럼 분명 어디선가 struct file_operations를 정의하고있고, 정의된 객체를 file 구조체에 등록하는 함수가 있을 것입니다. 한번 찾아보겠습니다.
-```
-~/work/linux-torvalds $ /bin/grep file_operations * -R | wc
-   3195   20545  264089
-```
-이번에는 운이 안좋았습니다. 너무 많네요. 3195개의 file_operations 정의가 있습니다. cscope등으로 검색해봐도 너무 많습니다. 이럴때는 별수없이 다른 책이나 구글 등을 통해서 파악할 수밖에 없습니다.
+Therefore there are so many callback functions in kernel sources.
+Sometime it's very difficult to investigate some kernel source if you're not used it.
+For examle, many filesystems registeres its own file-operation set.
+We cannot find out what operation is called only with seeing kernel code.
 
-다행히 file_operations 구조체는 많이 쓰이는 것만큼 설명 자료가 많습니다. 우리는 블럭 장치를 분석하고 있으므로 블럭 장치만 생각한다면 결국은 struct def_blk_fops가 우리가 찾는 객체입니다. 자세한 설명은 Understanding the linux kernel 책을 참고하세요. 너무나 오랫동안 많이 사용되는 구조체이므로 자세한 설명이 있습니다.
+Fortunately we already know file->f_ops stores def_blk_fops.
+So we can investigate call-stack like following.
 
-어쨌든 지금은 def_blk_fop가 file->f_ops에 저장되어있다는 것만 생각하고 넘어가겠습니다. 그러면 결국은 다음과 같은 콜스택을 얻을 수 있게 됩니다.
 ```
 READ: Sys_read
 --> __vfs_read
