@@ -171,8 +171,6 @@ Node 0, zone    DMA32           10           42            4            0
 
 ## struct address_space for the page cache management
 
-페이지캐시를 관리하는 데이터 구조체는 struct address_space입니다. 이 구조체의 객체는 가장 먼저 inode의 i_mapping 필드에 저장됩니다. inode는 파일시스템에서 생성하겠지요. 우리가만든 mybrd 드라이버는 디스크를 등록하면 장치 파일이 생성됩니다. 이때 파일이 생성된다는 것은 곧 inode도 생성된다는 것입니다. 디스크를 등록하는 add_disk 함수의 어딘가에 inode를 생성하는 코드가 숨어있습니다. 그리고 디스크의 장치 파일의 inode->i_mapping 필드는 모두 def_blk_aops가 저장됩니다.
-
 Page cache is represented by struct address_space.
 The object of struct address_space is stored in i_mapping field of inode of device.
 When driver adds a disk with add_disk() function, the disk is registered with device number.
@@ -225,10 +223,6 @@ static const struct address_space_operations def_blk_aops = {
 };
 ```
 
-open 시스템콜은 방금 말한대로 단지 file 구조체의 객체만 생성합니다. file의 객체의 f_op 필드에는 def_blk_fops의 포인터가 저장되고, file->f_mapping->a_ops 필드에 def_blk_aops의 포인터가 저장되는 것입니다. 그 다음에 read/write 등 실제 데이터를 처리하는 시스템콜이 호출되면 먼저 file_operaions에서 해당 콜백 함수가 호출되고, 그 콜백 함수에서 다시 address_space_operations의 콜백 함수가 호출되는 것입니다.
-
-예를 들면 read 시스템콜은 vfs_read 함수등을 거쳐서 def_blk_fops.read_iter 를 호출합니다. 그러면 blkdev_read_iter가 호출될거고, blkdev_read_iter는 어느순간에 file->f_mapping->a_ops->readpages를 호출합니다. 그러면 blkdev_readpages가 호출되고, blkdev_readpages는 디스크에 접근합니다.
-
 As I already decribed, open system-call creates a file object.
 And it calls f_op->open that is def_blk_fops->open(=blkdev_open) that set file->f_mapping as inode->i_mapping.
 Therefore file->f_mapping->a_ops is a pointer to def_blk_aops.
@@ -245,6 +239,9 @@ If the process wants direct IO, blkdev_write_iter bypass the page cache and do d
 
 The operations such like blkdev_readpages and blkdev_writepages generate bio and pass the bio to the block layer of kernel.
 bio has a pointer to struct block_device, so the block layer can find a queue to which bio should be added.
+
+Please notice that it's not easy to understand the data flow from the user process to the virtual filesystem, page cache, block layer and driver.
+Please read the code and refer https://www.thomas-krenn.com/en/wiki/Linux_Storage_Stack_Diagram for the overall picture.
 
 ### struct page의 mapping 과 index 필드
 
