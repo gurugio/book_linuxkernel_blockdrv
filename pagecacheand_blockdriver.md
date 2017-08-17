@@ -173,7 +173,7 @@ Node 0, zone    DMA32           10           42            4            0
 
 페이지캐시를 관리하는 데이터 구조체는 struct address_space입니다. 이 구조체의 객체는 가장 먼저 inode의 i_mapping 필드에 저장됩니다. inode는 파일시스템에서 생성하겠지요. 우리가만든 mybrd 드라이버는 디스크를 등록하면 장치 파일이 생성됩니다. 이때 파일이 생성된다는 것은 곧 inode도 생성된다는 것입니다. 디스크를 등록하는 add_disk 함수의 어딘가에 inode를 생성하는 코드가 숨어있습니다. 그리고 디스크의 장치 파일의 inode->i_mapping 필드는 모두 def_blk_aops가 저장됩니다.
 
-
+Page cache is represented by struct address_space.
 
 파일이 열릴때 open 시스템 콜에서 inode의 address_space 객체가 file의 f_mapping 필드에 inode의 i_mapping값을 저장합니다. 그리고나면 read/write 등 모든 시스템 콜에서 사용하는 file 객체에 address_space 객체가 사용되는 것이지요. inode는 파일이 열릴때만 참조되고, 그 이후로는 항상 file 객체만 사용됩니다. 그래서 같은 파일을 여러번 열 수 있고, 공유할 수 있는 것입니다.
 
