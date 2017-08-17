@@ -256,7 +256,7 @@ I skip it because we only use block deivce file.
 It would be better if you understand the page cache of block device first because it's simpler.
 Then please refer to other books.
 
-## 커널 콜스택 확인
+## check callstack from the VFS to driver
 
 Let's check how mybrd_make_request_fn() is called.
 We can use dump_stack() to print call-stack on terminal.
@@ -350,9 +350,10 @@ Following is the result of reading mybrd.
 [  143.141714]  [<ffffffff8188f1ae>] entry_SYSCALL_64_fastpath+0x12/0x71
 ```
 
-커널 소스를 따라가면서 한번 콜스택대로 함수가 호출되는지 확인해보세요. 중간중간에 static으로 선언된 함수들은 콜스택에 나타나지 않는다는 것도 알 수 있고, 어떻게 호출되는지 알 수 없는 콜백함수들도 있습니다.
-
-예를들어 blkdev_read_iter함수는 ```__vfs_read()``` 함수에 직접적으로 호출되는게 아닙니다. ```__vfs_read()```함수를 보면
+Please compare kernel code and callstack for yourself.
+You can see some static function are omitted and some callback functions are a little bit difficult to trace.
+For example, blkdev_read_iter() is not called directly by ``__vfs_read()``.
+As following, ``__vfs_read`` checks file->f_ops->read and file->f_ops->read_iter.
 ```
 ssize_t __vfs_read(struct file *file, char __user *buf, size_t count,
     	   loff_t *pos)
@@ -366,7 +367,8 @@ ssize_t __vfs_read(struct file *file, char __user *buf, size_t count,
 }
 EXPORT_SYMBOL(__vfs_read);
 ```
-file 구조체에서 f_op값을 읽는데 file 구조체에 뭐가 들어있는지 그냥 봐서는 알 수가 없습니다.
+
+We cannot find out which is called, file->f_ops->read or new_sync_read() with only reading ``__vfs_read``.
 
 커널은 인터페이스 디자인을 매우 신경써서 구현합니다. 왜냐면 파일시스템 개발자와 페이지 캐시 개발자가 다르고, 페이지 캐시 개발자와 블럭 레이어 개발자가 다르기 때문입니다. 그냥 다른게 아니라 나라도 다르고, 일하는 시간대도 다르고, 소속도 다르고, 같은건 커널을 개발한다는 것 뿐인 개발자들이 함께 개발하는 코드이므로 모듈화를 잘해야하고 인터페이스 정의도 매우 깐깐하게 합니다. 그래야 서로 다른 레이어/모듈간에 독립적으로 개발될 수 있겠지요. 만약 이쪽에서 개발한걸 다른쪽에서 그대로 써야한다면 수많은 개발자들이 서로의 결과물을 기다리다가 데드락이 걸릴 것입니다.
 
