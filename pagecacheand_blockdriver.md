@@ -243,18 +243,27 @@ bio has a pointer to struct block_device, so the block layer can find a queue to
 Please notice that it's not easy to understand the data flow from the user process to the virtual filesystem, page cache, block layer and driver.
 Please read the code and refer https://www.thomas-krenn.com/en/wiki/Linux_Storage_Stack_Diagram for the overall picture.
 
-### struct page의 mapping 과 index 필드
+### mapping and index fields of struct page
 
-struct page의 mapping과 index 필드도 페이지 캐시를 위해 사용됩니다. mapping 필드는 address_space의 포인터가 저장됩니다. index 필드는 파일에서 현재 페이지의 offset를 저장합니다. index필드는 mybrd에서 만든 것과 동일하게 사용되는 것입니다. brd.c 패치 히스토리를 읽다보면 페이지캐시의 데이터 저장 방식을 따라서 만들었는데, Linus Torvalds의 아이디어였다라는 기록이 있습니다.
+The mapping and index fields of struct page are used for the page cache.
+The mapping field has the pointer to the struct address_space and the index has the offset in logical device.
+Yes, we had already used the index field of struct page as the offset of the mybrd block device.
+So page management of mybrd driver (originally brd driver) is very similar to the page cache.
+There is a comment in the git log of brd.c that using index field of the page like the page cache was Linux torvalds' idea.
 
-아직은 감이 안오실건데 코드를 보다보면 순서가 들어오실 겁니다.
+Actually there is one more part in the page cache, buffer-block and buffer-head.
+I skip it because we only use block deivce file.
+It would be better if you understand the page cache of block device first because it's simpler.
+Then please refer to other books.
 
-문서를 단순화하기위해 버퍼헤드에 대한 내용은 생략하겠습니다. 블럭 장치의 블럭 크기는 페이지 크기와 같으므로 버퍼헤드가 별다른 역할을 하지 않기 때문입니다. 블럭 장치의 페이지캐시가 눈에 익어지면 좀더 복잡한 일반 파일의 페이지캐시도 좀더 쉽게 접근이 될것같습니다.
+## 커널 콜스택 확인
 
-##커널 콜스택 확인
-어플에서 시스템 콜을 호출하면 커널 레벨로 진입하고, 커널 레벨로 진입한 이후의 함수 호출들은 dump_stack() 함수를 써서 확인할 수 있습니다. 드라이버를 만들때도 써봤지요.
+Let's check how mybrd_make_request_fn() is called.
+We can use dump_stack() to print call-stack on terminal.
+The call-stack should print functions of the virtual filesystem, the page cache and the block layer.
 
-mybrd_make_request_fn()함수에 dump_stack()을 넣고 실행해보겠습니다. queue_mode값을 MYBRD_Q_BIO로 바꾸면 콜스택을 조금 줄일 수 있습니다.
+I changed the queue_mode to MYBRD_Q_BIO for simpler call-stack.
+
 ```
 diff --git a/mybrd.c b/mybrd.c
 index 11fb9af..cf8b717 100644
@@ -279,9 +288,10 @@ index 11fb9af..cf8b717 100644
         // print info of bio
         sector = bio->bi_iter.bi_sector;
 ```
-이제 커널을 부팅하고 dd 명령을 이용해서 읽기쓰기를 해보면 콜스택이 출력됩니다.
 
-다음은 제가 쓰기를 했을 때 제 환경에서 출력된 콜스택입니다.
+Then boot the kernel and run dd.
+Following is what I wrote data into mybrd disk in my virtual machine.
+
 ```
 [  194.612304] Call Trace:
 [  194.612474]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
@@ -316,7 +326,7 @@ index 11fb9af..cf8b717 100644
 [  194.624567]  [<ffffffff8188f30c>] int_ret_from_sys_call+0x25/0x8f
 ```
 
-다음은 읽기를 했을 때 콜스택입니다.
+Following is the result of reading mybrd.
 ```
 [  143.111883]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
 [  143.113572]  [<ffffffff814fac32>] mybrd_make_request_fn+0x42/0x260
