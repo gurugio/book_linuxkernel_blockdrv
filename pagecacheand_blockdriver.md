@@ -174,12 +174,12 @@ Node 0, zone    DMA32           10           42            4            0
 페이지캐시를 관리하는 데이터 구조체는 struct address_space입니다. 이 구조체의 객체는 가장 먼저 inode의 i_mapping 필드에 저장됩니다. inode는 파일시스템에서 생성하겠지요. 우리가만든 mybrd 드라이버는 디스크를 등록하면 장치 파일이 생성됩니다. 이때 파일이 생성된다는 것은 곧 inode도 생성된다는 것입니다. 디스크를 등록하는 add_disk 함수의 어딘가에 inode를 생성하는 코드가 숨어있습니다. 그리고 디스크의 장치 파일의 inode->i_mapping 필드는 모두 def_blk_aops가 저장됩니다.
 
 Page cache is represented by struct address_space.
+The object of struct address_space is stored in i_mapping field of inode of device.
+When driver adds a disk with add_disk() function, the disk is registered with device number.
+(I'll skip creating inode. Roughly when mknod or event manager (for example, systemd) creates a device node for the disk, a inode for the disk is created. Please refer filesystem chapter of other books. Or check ext4_mknod() function.)
+There is another important field for the page cache in inode that is i_fop field.
+Default i_fop for the block device is def_blk_fops as following.
 
-파일이 열릴때 open 시스템 콜에서 inode의 address_space 객체가 file의 f_mapping 필드에 inode의 i_mapping값을 저장합니다. 그리고나면 read/write 등 모든 시스템 콜에서 사용하는 file 객체에 address_space 객체가 사용되는 것이지요. inode는 파일이 열릴때만 참조되고, 그 이후로는 항상 file 객체만 사용됩니다. 그래서 같은 파일을 여러번 열 수 있고, 공유할 수 있는 것입니다.
-
-struct address_space에서 가장 중요한 필드는 struct address_space_operations 입니다.
-
-fs/block_dev.c 파일을 열어보면 아래와같이 file_operations 타입의 객체와 address_space_operations 타입의 객체가 정의되어있습니다.
 ```
 const struct file_operations def_blk_fops = {
     .open		= blkdev_open,
@@ -196,6 +196,22 @@ const struct file_operations def_blk_fops = {
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 };
+```
+
+When a process opens a file, kernel copies i_fop into f_fop field of struct file and calls f_op->open.
+So blkdev_open() is called when a block device file is opened.
+In blkdev_open(), kernel copies i_mapping of inode into f_mapping of struct file.
+Therefore every process can share the page cache.
+For example, if one process reads sector 0~10 of disk A, data of sector 0~10 is copied into memory.
+Later if another process reads sector 5~0 of disk A, kernel doesn't read the disk and only returns data in memory.
+
+struct address_space에서 가장 중요한 필드는 struct address_space_operations 입니다.
+fs/block_dev.c 파일을 열어보면 아래와같이 file_operations 타입의 객체와 address_space_operations 타입의 객체가 정의되어있습니다.
+
+One of important fields of struct address_space is ``struct address_space_operations a_ops`` that has a set of operations for data transfer between the disk and the page cache.
+Following is the default operation of block device.
+
+```
 static const struct address_space_operations def_blk_aops = {
     .readpage	= blkdev_readpage,
 	.readpages	= blkdev_readpages,
@@ -213,9 +229,24 @@ open 시스템콜은 방금 말한대로 단지 file 구조체의 객체만 생�
 
 예를 들면 read 시스템콜은 vfs_read 함수등을 거쳐서 def_blk_fops.read_iter 를 호출합니다. 그러면 blkdev_read_iter가 호출될거고, blkdev_read_iter는 어느순간에 file->f_mapping->a_ops->readpages를 호출합니다. 그러면 blkdev_readpages가 호출되고, blkdev_readpages는 디스크에 접근합니다.
 
-address_space 객체의 host 필드에 inode의 포인터가 있고, inode에는 해당 파일이 블럭 장치 파일일 경우 struct block_device 에 대한 포인터를 저장하고 있으므로 결국 address_space 객체만 있으면 현재 페이지캐시가 어떤 블럭 장치의 데이터를 저장하고 있는지를 알 수 있습니다. 따라서 IO를 실행하기 위해 드라이버로 전달할 bio 객체를 만들 때도 mybrd가 생성한 request-queue에 bio를 전달할 수 있는 것이지요.
+As I already decribed, open system-call creates a file object.
+And it calls f_op->open that is def_blk_fops->open(=blkdev_open) that set file->f_mapping as inode->i_mapping.
+Therefore file->f_mapping->a_ops is a pointer to def_blk_aops.
 
-###struct page의 mapping 과 index 필드
+Later when the process reads or writes data into disk, read/write system-call calls f_op->read_iter and f_op->write_iter which read/write data in the page cache.
+If the process does not specify the direct writing, blkdev_write_iter stores data in the page cache and terminates the system call.
+So writing data into disk can be finished fast and the process can go ahead.
+
+If the process read data, data should be ready immediately.
+So blkdev_read_iter checks the page cache and calls file->f_mapping->a_ops(=blkdev_readpages) to receive data from the driver of the disk if data is not in the page cache.
+If data is in the page cache, reading data of the process can be done fast without IO processing of slow disk.
+
+If the process wants direct IO, blkdev_write_iter bypass the page cache and do data transfer immediately.
+
+The operations such like blkdev_readpages and blkdev_writepages generate bio and pass the bio to the block layer of kernel.
+bio has a pointer to struct block_device, so the block layer can find a queue to which bio should be added.
+
+### struct page의 mapping 과 index 필드
 
 struct page의 mapping과 index 필드도 페이지 캐시를 위해 사용됩니다. mapping 필드는 address_space의 포인터가 저장됩니다. index 필드는 파일에서 현재 페이지의 offset를 저장합니다. index필드는 mybrd에서 만든 것과 동일하게 사용되는 것입니다. brd.c 패치 히스토리를 읽다보면 페이지캐시의 데이터 저장 방식을 따라서 만들었는데, Linus Torvalds의 아이디어였다라는 기록이 있습니다.
 
