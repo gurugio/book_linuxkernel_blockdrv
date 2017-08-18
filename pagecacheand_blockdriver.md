@@ -555,19 +555,13 @@ Followings are arguments of do_generic_file_read().
 ### find_get_page (= pagecache_get_page)
 
 find_get_page() is a wrapper of pagecache_get_page()
+find_get_page() searches the page cache of mapping and returns a page if there is a page including data at offset.
+find_get_page() passes 0 to fgp_flags and gfp_mask of arguments of pagecache_get_page().
+So pagecache_get_page() will return NULL if there is no such page.
 
-find_get_entry함수를 호출해서 패이지캐시에 이미 해당 offset이 있는지를 찾습니다. find_get_page에서 pagecache_get_page를 호출할 때 fgp_flags 값과 gfp_mask 값을 0으로 호출했으므로 결국 페이지캐시에 해당 offset이 없으면 null을 반환합니다.
+Let's look into find_get_entry() which is called by pagecache_get_page().
+It calls radix_tree_lookup_slot() to get page in the radix-tree and increases reference counter with page_cache_get_speculative().
 
-만약 fgp_flags에 FGP_CREATE 플래스가 있었다면 페이지를 할당하고, 페이지를 lru리스트에 포함합니다.
-
-find_get_entry를 잠깐 볼까요. 가장 먼저 radix_tree_lookup_slot함수를 호출해서 radix-tree의 트리에 저장된 page의 더블 포인터를 가져오고, radix_tree_deref_slot으로 더블포인터를 포인터로 바꾸고, page_cache_get_speculative로 페이지의 참조 카운터를 증가합니다.
-
-mybrd 드라이버에서 radix-tree에 페이지를 추가할 때 radix_tree_lookup 함수 하나만 사용했었습니다. 그런데 왜 여기에서는 radix_tree_lookup_slot을 사용할까요? 그 이유는 page_cache_get_speculative 함수의 주석에 있습니다. "This is the interesting part of the lockless pagecache"라는 설명이 있습니다. 즉 페이지를 찾아보는데 페이지를 찾는 중간에 다른 쓰레드에서 페이지를 해지하거나 다른데 사용했다면, 다시 페이지를 찾습니다. 결국 rcu_read_lock()만으로 페이지캐시를 구현하게 됩니다.
-
-사실 저도 왜 이 코드가 동작하는지 완벽하게 이해했다고 말할 수 없을것 같습니다. 정확한 설명은page_cache_get_speculative함수의 주석을 참고하시기 바랍니다. 어쨌든 제가 말씀드리고 싶은건 페이지캐시가 lockless로 구현됐다는 것입니다.
-```
-page_cache_sync_readahead (=ondemand_readahead=__do_page_cache_readahead)
-```
 mybrd의 콜스택을 보면 page_cache_sync_readahead가 호출됩니다. 페이지 캐시에 페이지가 없었다는 뜻입니다. page_cache_sync_readahead 코드를 보면 결국 __do_page_cache_readahead함수가 핵심입니다.
 
 __do_page_cache_readahead 함수 인자중에 몇개의 페이지를 읽을지 nr_to_read 값이 있습니다. 최초로 읽을 offset부터 미리 여러개의 페이지를 읽어놓는 것입니다. 그럼 사용자가 파일을 계속 읽을 때마다 IO가 발생하지 않고 페이지캐시에서 바로 데이터를 가져갈 수 있겠지요. radix_tree_lookup으로 해당 위치의 데이터가 페이지캐시에 있나 확인하고 없으면 page_cache_alloc_readahead 함수로 페이지를 할당합니다. 그리고 각 페이지마다 page->index 필드에 offset을 씁니다.
