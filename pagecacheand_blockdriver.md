@@ -536,20 +536,16 @@ const struct address_space_operations ext2_aops = {
 There are duplicated functions in callstacks of mybrd driver and ext2 filesystem.
 The duplicated functions consists of the virtual filesystem and block layer.
 
-## 장치에서 페이지캐시로 데이터 읽어오기
+## do_generic_file_read: read data from mybrd device to the page cache
 
-데이터를 읽을 때 콜스택을 보면 mybrd블럭 장치를 직접 읽을 경우와 파일시스템에 존재하는 파일을 읽을 경우 모두 do_generic_file_read을 호출하는걸 알 수 있습니다. 이 함수를 간단하게 분석해보면 페이지캐시가 어떻게 동작하는지, 언제 페이지캐시에서 블럭 장치를 읽어서 페이지캐시를 추가하는지 등을 알아보겠습니다.
+We know do_generic_file_read() is called for both of file reading and device reading.
+I'll describe do_generic_file_read() briefly to understand data transfer from mybrd device to the page cache.
 
-리눅스 소스를 보시면서 글을 읽으시길 바랍니다. 소스를 하나하나 복사하는건 의미가 없으니까요. 나중에 4.10이 되든, 5.0이 나오든 소스는 바뀝니다. 하지만 디자인과 코드의 목표는 남습니다. 페이지캐시를 구현하는 방법은 달라지지만 페이지캐시의 목적과 큰 디자인은 오래가겠지요. 그러니 소스 한줄한줄보다는 왜 이렇게 구현했는가 목적이 뭔가를 생각하는게 처음 커널을 분석할때 필요한 태도인것 같습니다. 나중에 실무에서나 취미로나 버그를 잡을 때 특정 버전의 코드를 더 깊게 봐야할때가 있겠지요.
+Please check kernel sources as read this document.
 
-###do_generic_file_read
+### arguments
 
-블럭 장치 파일(/dev/mybrd)이든 파일시스템의 파일이든 데이터를 읽을 때는 공통적으로 do_generic_file_read가 호출됩니다. 길고 복잡한 함수이므로 핵심적인 동작들만 따져보겠습니다.
-
-####함수 인자
-
-함수인자부터 뭔지 보겠습니다.
-
+Followings are arguments of do_generic_file_read().
 * struct file *filep: 읽을 파일에 해당하는 file 객체입니다. file 구조체의 f_mapping이 struct address_space 객체를 가르키는 포인터입니다.
 * loff_t *ppos: read시스템콜을 호출하기전에 lseek 시스템콜을 써서 파일의 어디부터 읽을지를 선택합니다. lseek시스템콜은 실질적으로 어떤 처리를 하는게 아니라 struct file 객체의 f_pos 필드에 위치를 기록했다가 read나 write 시스템 콜이 호출되었을 때 읽어서 사용합니다.
  * 페이지 캐시는 페이지단위로 데이터가 저장되어있습니다. 따라서 페이지캐시의 radix-tree에서 사용할 키값은 ppos 값을 페이지 크기로 나눈 값이 되겠지요.
@@ -557,7 +553,7 @@ The duplicated functions consists of the virtual filesystem and block layer.
  * 참고 추가: https://lwn.net/Articles/625077/
 * ssize_t written: generic_file_read_iter에서 direct IO가 발생해서 읽기가 일부 처리된 경우에 얼마나 읽기가 끝났는지 알려주는 값입니다. 그냥 함수가 호출될때의 값은 0으로 생각해도 됩니다. 데이터를 읽으면서 written의 값이 증가하고 읽기가 끝나면 written 값을 반환합니다.
 
-####find_get_page (= pagecache_get_page)
+### find_get_page (= pagecache_get_page)
 
 find_get_page는 pagecache_get_page를 호출하는 wrapper 함수입니다.
 
@@ -585,7 +581,7 @@ blk_start/finish_plug 함수는 참고 자료를 확인하세요.
 
 이제 blkdef_readpages로 넘어왔습니다. 그리고 blkdev_readpages는 mpage_readpages를 호출합니다. mpage_readpages함수를 보면 주석이 매우 깁니다. 중요한 함수라는걸 알 수 있습니다. mpages_readpages 함수는 페이지를 lru에 추가하고, 임시로 사용할 bio를 생성해서 IO를 발생시킵니다. bio를 IO 스케줄러에 전달하는 함수가 바로 submit_bio함수입니다. bio를 생성하는 함수는 do_mpage_readpage이고, submit_bio를 호출하는 함수가 mpage_bio_submit입니다.
 
-####add_to_page_cache_lru
+### add_to_page_cache_lru
 페이지 하나를 페이지 캐시에도 넣고, lru 리스트에도 추가하는 함수입니다. 먼저 페이지를 lock합니다. 새로 할당된 페이지이므로 다른 쓰레드에서 사용할 염려가 없으므로 페이지가 잠겨있는지 확인할 필요가 없으니 __set_page_locked함수로 페이지를 잡급니다.
 
 __add_to_page_cache_locked는 다음 순서로 동작합니다.
@@ -600,7 +596,7 @@ __add_to_page_cache_locked는 다음 순서로 동작합니다.
 
 참고로 __add_to_page_cache_locked함수에서도 페이지의 참조 카운터를 증가시키고, lru_cache_add에서도 페이지의 참조 카운터를 증가시킵니다. 이 말은 lru 리스트와 페이지캐시가 별도로 동작한다는 것입니다. lru에서 빠진다고해도 페이지캐시에서 빠지는게 아니기 때문입니다.
 
-####do_mpage_readpage
+### do_mpage_readpage
 복잡한 함수입니다만 mpage_alloc를 호출해서 가장 핵심은 bio 객체를 만든다는 것만 알면 될것같습니다.
 
 do_mpage_readpage인자를 보면
@@ -626,16 +622,17 @@ mpage_readpages에서 루프를 돌면서 다시 do_mpage_readpage를 호출했�
 
 mpage_alloc은 첫번째 섹터 번호만 설정합니다. 추가 정보는 bio_add_page에서 추가합니다. bio_add_page 함수도 간단합니다. bio의 bi_io_vec 배열을 가져와서 bv_page, bv_len, bv_offset을 초기화하는데 블럭 장치는 한번에 한 페이지씩 읽으므로 bv_len은 항상 4096이되고 bv_offset은 0이 될 것입니다. bi_vcnt를 증가시켜서 bi_io_vec배열을 차례대로 초기화합니다.
 
-####mpage_bio_submit
+### mpage_bio_submit
 
 mpage_alloc으로 생성한 bio 객체를 submit_bio 함수에 전달합니다. 결국 submit_bio는 generic_make_request를 통해서 mybrd로 넘어갑니다. bio 처리가 끝나면 호출된 bio->bi_end_io 콜백함수는 mpage_end_io입니다. add_to_page_cache_lru에서 페이지를 잠궜으므로 mpage_end_io에서는 페이지 락을 풀고 페이지를 페이지의 데이터가 막 읽혀진 상태이니 uptodate 상태로 표시합니다. 그리고 다쓴 bio를 해지합니다.
 
-####copy_page_to_iter
+### copy_page_to_iter
 
 iter에는 유저 레벨의 버퍼에 대한 정보가 들어있습니다. page에 있는 데이터를 유저 레벨 버퍼로 복사합니다.
 iov_iter_count에서 iter->count 필드가 0이되면 do_generic_file_read가 종료됩니다.
 
-##페이지캐시에 데이터 쓰기
+## block_write_begin: write data into the page cache
+
 block_write_begin함수만 간략하게 분석해보겠습니다.
 
 block_write_begin은 grab_cache_page_write_begin와 __block_write_begin로 이루어져있습니다. grab_cache_page_write_begin은 pagecache_get_page를 호출합니다.
@@ -660,8 +657,8 @@ pagecache_get_page가 하는 일은 간단히보면
 
 페이지 캐시에 데이터를 쓸 준비가 끝났지만, 페이지캐시의 데이터를 장치에 쓰지는 않습니다.
 
-##페이지캐시에 있는 페이지 해지
-###/proc/sys/vm/drop_caches
+## 페이지캐시에 있는 페이지 해지
+### /proc/sys/vm/drop_caches
 
 /proc/ 디렉토리는 커널의 정보와 현재 실행중인 프로세스들의 정보가 있는 곳입니다. 이중에서 유명한게 페이지캐시들을 해지시켜서 가용 메모리를 확보하는 /proc/sys/vm/drop_caches가 있습니다. 이 파일이 어떻게 사용되는지를 알면 언제 어떻게 페이지캐시를 해지하는지를 알 수 있겠지요.
 
@@ -741,7 +738,7 @@ __delete_from_page_cache를 간략하게 보면
 
 블럭 장치의 address_space_operations는 def_blk_aops 입니다. 확인해보면 freepage는 정의하지 않았네요. 페이지가 잠겨있고 radix-tree에서 빠졌으면, 다른 곳에서 페이지를 사용하지 않는다면 해지해도 됩니다. 따라서 마지막으로 페이지에 대한 참조를 줄이는 page_cache_release를 호출합니다. 참조카운터가 0이되면 자동으로 해지가 되서 버디리스트에 들어가겠네요. page_cache_get을 언제 호출했는지 기억이 나시나요?
 
-###페이지캐시에서 장치로 데이터 쓰기
+### 페이지캐시에서 장치로 데이터 쓰기
 
 delete_from_page_cache를 보면 페이지를 해지하기전에 페이지의 데이터를 장치로 보내는 부분이 없습니다. 페이지에 만약 새로운 데이터가 있고, 아직 장치에 쓰기 전이라면 페이지를 해지하기전에 데이터를 flush해야할텐데, 그건 어디에서 할까요?
 
