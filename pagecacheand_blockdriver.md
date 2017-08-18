@@ -562,32 +562,45 @@ So pagecache_get_page() will return NULL if there is no such page.
 Let's look into find_get_entry() which is called by pagecache_get_page().
 It calls radix_tree_lookup_slot() to get page in the radix-tree and increases reference counter with page_cache_get_speculative().
 
-mybrd의 콜스택을 보면 page_cache_sync_readahead가 호출됩니다. 페이지 캐시에 페이지가 없었다는 뜻입니다. page_cache_sync_readahead 코드를 보면 결국 __do_page_cache_readahead함수가 핵심입니다.
+There is page_cache_sync_readahead() in the callstack.
+It means searching a page in the page cache by find_get_page() failed.
+So page_cache_sync_readahead() reads data from a disk.
+It reads more adjacent sectors than specified by upper layer.
+Next data request is done without disk accessing.
+page_cache_sync_readahead() calls read_pages() function that finally calls the operation of address_space: mapping->a_ops->readpages = blkdev_readpages.
 
-__do_page_cache_readahead 함수 인자중에 몇개의 페이지를 읽을지 nr_to_read 값이 있습니다. 최초로 읽을 offset부터 미리 여러개의 페이지를 읽어놓는 것입니다. 그럼 사용자가 파일을 계속 읽을 때마다 IO가 발생하지 않고 페이지캐시에서 바로 데이터를 가져갈 수 있겠지요. radix_tree_lookup으로 해당 위치의 데이터가 페이지캐시에 있나 확인하고 없으면 page_cache_alloc_readahead 함수로 페이지를 할당합니다. 그리고 각 페이지마다 page->index 필드에 offset을 씁니다.
+blkdef_readpages calls mpage_readpages which are one of essential functions in block layer.
+mpage_readpages sends bio to the request-queue of driver with submit_bio() and adds page into lru.
+bio is created by do_mpage_readpage() and submit_bio() is called by mpage_bio_submit().
 
-그리고 read_pages 함수에서 이전에 할당한 페이지들에 블럭 장치의 데이터를 읽어옵니다. read_pages를 보면 mapping->a_ops->readpages와 mapping->a_ops->readpage를 호출합니다. mybrd는 블럭 장치이므로 def_blk_aops를 확인하면 어떤 함수가 호출될지 알 수 있습니다. def_blk_aops.readpages = blkdev_readpages 함수가 등록돼있으니 blkdev_readpages가 호출되겠네요.
-
-blk_start/finish_plug 함수는 참고 자료를 확인하세요.
-* http://nimhaplz.egloos.com/m/5598614
-* http://studyfoss.egloos.com/5585801
-
-이제 blkdef_readpages로 넘어왔습니다. 그리고 blkdev_readpages는 mpage_readpages를 호출합니다. mpage_readpages함수를 보면 주석이 매우 깁니다. 중요한 함수라는걸 알 수 있습니다. mpages_readpages 함수는 페이지를 lru에 추가하고, 임시로 사용할 bio를 생성해서 IO를 발생시킵니다. bio를 IO 스케줄러에 전달하는 함수가 바로 submit_bio함수입니다. bio를 생성하는 함수는 do_mpage_readpage이고, submit_bio를 호출하는 함수가 mpage_bio_submit입니다.
+I've described some essential functions of the page cache very roughly.
+Please read source code carefully and check other documents.
+The page cache is never easy to understand because it applies many optimization techniques and supports many cores.
+I don't understand every detail in the page cache.
+Even-if I understood it, I could not describe it in one document.
+Please take your time.
 
 ### add_to_page_cache_lru
-페이지 하나를 페이지 캐시에도 넣고, lru 리스트에도 추가하는 함수입니다. 먼저 페이지를 lock합니다. 새로 할당된 페이지이므로 다른 쓰레드에서 사용할 염려가 없으므로 페이지가 잠겨있는지 확인할 필요가 없으니 __set_page_locked함수로 페이지를 잡급니다.
 
-__add_to_page_cache_locked는 다음 순서로 동작합니다.
-1. radix_tree_maybe_preload: radix_tree_preload와 같은 일을 하지만, 페이지 플래그에 따라 radix_tree_preload를 호출하지 않을 수도 있습니다.
-1. page_cache_get: get_page와 같습니다. 페이지의 참조 카운터를 증가시킵니다.
-1. page의 mapping, index 필드 설정
-1. page_cache_tree_insert: 트리에 페이지를 넣는 함수인데 mapping->tree_lock을 잡고 있는 상태에서 왜 radix_tree_insert를 안쓰고 page_cache_tree_insert를 구현했는지를 잘 모르겠습니다. 어쨋든 page_cache_tree_insert 코드를 보면 radix_tree_insert와 유사합니다.
-1. radix_tree_preload_end: radix_tree_preload를 사용했다면 radix_tree_preload_end를 꼭 호출해야합니다.
-1. __inc_zone_page_state: 각 zone마다 몇개의 페이지가 있고 어떤 페이지들이 어떤 상태인지 /proc/zoneinfo 파일에 통계 정보를 가지고 있습니다. 이 통계 정보를 갱신하는 함수입니다. NR_FILE_PAGES는 해당 zone에서 몇개의 페이지가 페이지캐시로 사용되었는지를 알려주는 값입니다. /proc/zoneinfo 파일에서 nr_file_pages 값에 해당됩니다.
+It adds one page into the page cache and the lru list as following sequences.
+1. radix_tree_maybe_preload: almost same to radix_tree_preload
+1. page_cache_get: same to get_page, increase ref-count of the page
+1. initialize mapping and index of the page
+1. page_cache_tree_insert: add the page into radix-tree
+1. radix_tree_preload_end: finish of radix_tree_preload
+1. update statistics of each zone with ``__inc_zone_page_state()`` function.
+
+You can check the statistics of each zone via /proc/zoneinfo file.
+``__inc_zone_page_state`` updates this file.
+nr_file_pages (NR_FILE_PAGES of ``__inc_zone_page_state()``) of /proc/zoneinfo is amount of pages used for the page cache in the zone.
 
 이제 페이지가 페이지캐시에 들어갔으니 lru_cache_add 함수로 페이지를 lru리스트에 추가합니다. lru_cache_add함수는 각 프로세별로 존재하는 lru_add_pvec 배열에 새로운 페이지를 추가합니다.
 
-참고로 __add_to_page_cache_locked함수에서도 페이지의 참조 카운터를 증가시키고, lru_cache_add에서도 페이지의 참조 카운터를 증가시킵니다. 이 말은 lru 리스트와 페이지캐시가 별도로 동작한다는 것입니다. lru에서 빠진다고해도 페이지캐시에서 빠지는게 아니기 때문입니다.
+After the page is added into the page cache, it adds the page with lru_page_add() that adds the page into per-cpu array, lru_add_pvec.
+
+FYI, ``__add_to_page_cache_locked()`` increases the ref-count of the page and lru_cache_add() also increases the counter.
+It means if the page is extracted from lru, the page will not be freed.
+On the contrary, if you want to free a page in lru, you should extract it from lru and the page cache and decrease counter twice.
 
 ### do_mpage_readpage
 복잡한 함수입니다만 mpage_alloc를 호출해서 가장 핵심은 bio 객체를 만든다는 것만 알면 될것같습니다.
