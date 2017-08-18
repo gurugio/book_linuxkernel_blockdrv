@@ -203,9 +203,6 @@ Therefore every process can share the page cache.
 For example, if one process reads sector 0~10 of disk A, data of sector 0~10 is copied into memory.
 Later if another process reads sector 5~0 of disk A, kernel doesn't read the disk and only returns data in memory.
 
-struct address_space에서 가장 중요한 필드는 struct address_space_operations 입니다.
-fs/block_dev.c 파일을 열어보면 아래와같이 file_operations 타입의 객체와 address_space_operations 타입의 객체가 정의되어있습니다.
-
 One of important fields of struct address_space is ``struct address_space_operations a_ops`` that has a set of operations for data transfer between the disk and the page cache.
 Following is the default operation of block device.
 
@@ -594,8 +591,6 @@ You can check the statistics of each zone via /proc/zoneinfo file.
 ``__inc_zone_page_state`` updates this file.
 nr_file_pages (NR_FILE_PAGES of ``__inc_zone_page_state()``) of /proc/zoneinfo is amount of pages used for the page cache in the zone.
 
-이제 페이지가 페이지캐시에 들어갔으니 lru_cache_add 함수로 페이지를 lru리스트에 추가합니다. lru_cache_add함수는 각 프로세별로 존재하는 lru_add_pvec 배열에 새로운 페이지를 추가합니다.
-
 After the page is added into the page cache, it adds the page with lru_page_add() that adds the page into per-cpu array, lru_add_pvec.
 
 FYI, ``__add_to_page_cache_locked()`` increases the ref-count of the page and lru_cache_add() also increases the counter.
@@ -603,9 +598,10 @@ It means if the page is extracted from lru, the page will not be freed.
 On the contrary, if you want to free a page in lru, you should extract it from lru and the page cache and decrease counter twice.
 
 ### do_mpage_readpage
-복잡한 함수입니다만 mpage_alloc를 호출해서 가장 핵심은 bio 객체를 만든다는 것만 알면 될것같습니다.
 
-do_mpage_readpage인자를 보면
+It look very long and complex but the core of this function is creating bio with mpage_alloc().
+
+Arguments of do_mpage_readpage() are:
 * struct bio *bio: 처음에는 NULL값입니다. mpage_alloc 함수로 새로 bio 객체를 만들으라는 의미입니다. 한번 bio를 만들고나면 다음 for 루프에서 계속 다음 페이지를 위한 정보를 추가합니다. 그래서 for 루프가 종료된 다음에는 모든 페이지의 IO를 위한 정보를 가지게됩니다.
 * struct page *page: 새로 할당해서 페이지캐시와 lru 리스트에 추가된 페이지입니다. 장치로부터 데이터를 읽어서 이 페이지에 저장합니다.
 * unsigned nr_pages: 남은 페이지 갯수
