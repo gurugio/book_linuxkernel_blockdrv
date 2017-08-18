@@ -381,6 +381,7 @@ We cannot find out what operation is called only with seeing kernel code.
 Fortunately we already know file->f_ops stores def_blk_fops.
 So we can investigate call-stack like following.
 
+For reading:
 ```
 READ: Sys_read
 --> __vfs_read
@@ -397,6 +398,10 @@ READ: Sys_read
 --> submit_bio
 --> generic_make_request
 --> mybrd_make_request_fn
+```
+
+For writing:
+```
 WRITE: int_ret_from_sys_call
 --> syscall_return_slowpath
 --> exit_to_usermode_loop
@@ -418,11 +423,28 @@ WRITE: int_ret_from_sys_call
 --> generic_make_request
 --> mybrd_make_request_fn
 ```
-그런데 쓰기에서 콜스택이 이상한게 보입니다. Sys_write같이 뭔가 시스템콜같은 함수 이름이 나타나야하는데 뜬금없이 시스템 콜이 끝나는것 같은 int_ret_from_sys_call이라는 함수가 호출됩니다.
 
-여기서 또 커널을 분석할 때 자주 막히는 지점이 나타납니다. 어떤 처리가 synchronouse하게 되면 그냥 함수들의 호출 관계가 바로 나타납니다. 데이터를 읽는 것은 어플에게 당장 데이터를 줘야하므로 처리를 지연시킬 수 없습니다. 바로 그 순간에 데이터를 읽어와야합니다. 그게 메모리에있는 버퍼에서 읽어오던, 장치를 읽어서 읽어오던 데이터를 가져와야합니다. 그런데 쓰기는 다릅니다. 어플은 그냥 쓰기만하면 되고, 커널은 이 데이터를 언제 최종 블럭 장치에 써야할지 결정할 수 있습니다. 데이터를 잃어버리지만 않는다면 당장 블럭 장치에 접근할 필요가 없어집니다. 따라서 이 데이터가 언제 블럭 장치에 들어갈지는 분석하기가 어려워집니다.
+The callstack of writing is very different to the callstack of reading.
+The callstack of reading starts with a system-call Sys_read but writing starts with int_ret_from_syscall that is called at the end of system-call.
 
-비동기 데이터 처리를 설명하자면 제 지식도 한계가 있으므로 지금은 일단 write의 시스템 콜부터 페이지 캐시까지의 콜스택만 따로 뽑아보겠습니다. 이때는 mybrd 드라이버가 호출되는게 아니므로 mybrd 드라이버를 아무리 돌려봐야 알 수가 없습니다. 그냥 read의 콜스택을 보고 코드를 따라가보는게 빠릅니다. blkdev_read_iter라는 함수가 있으면 당연히 blkdev_write_iter라는 함수도 있을거라는 계산을 가지고 코드를 따라가보면 대강 다음과 같은 콜스택을 얻을 수 있습니다.
+As I already described, reading data generates IOs and driver should handle IOs.
+But when application writes data into a disk, data is not written into a disk but memory.
+So driver is not called by write system-call.
+
+Kernel has some policies when memory data should be written into a disk.
+Those policies are beyond of this document.
+Please refer to other books.
+
+In this document, It would be enough if you understood that writing data is asynchronous.
+And we need to seperate layers to two parts
+1. write system-call ~ page-cache layer (synchronous to the system-call)
+2. page-cache layer ~ block layer ~ driver
+
+Fortunately we have the callstack for reading.
+Functions for writing should be counter-part of functions in the callstack of reading.
+For example, we can guess there is a counter-part of blkdev_read_iter that is blkdev_write_iter.
+Finally I could find callstack like following for myself.
+
 ```
 __vfs_write
 --> new_sync_write
@@ -432,15 +454,16 @@ __vfs_write
 --> blkdev_write_begin(&blkdev_write_end) 
 --> block_write_begin
 ```
-읽기에서 얻은 콜스택과 완전히 대칭되는 함수들이 있어서 별로 어렵지 않게 찾을 수 있었습니다.
 
-그리고 콜 스택 중간에 알수없는 a_ops 객체가 나타납니다. 이것은 일단 block_dev.c 파일에 있는 def_blk_aops 구조체라고 생각하고 넘기겠습니다. 뒤에 페이지 캐시를 제대로 분석할 때 제대로 소개하겠습니다.
+Yes, the page cache layers calls the operation of the address_space, a_ops.
+Now you know the flow of function.
+You can start reading kernel code ;-)
 
-## ext2에서의 콜스택
+## file operations and address_space operations of ext2
 
-파일시스템과 페이지캐시의 관계를 아주아주 간단하게 한번 추적해보겠습니다. 제일 단순한 ext2 파일시스템의 경우만 보겠습니다.
+To understand the operation of block device, let's check the operations of ext2.
 
-ext2의 file_operations를 한번 볼까요.
+Let's find file operations of ext2 like following.
 ```
 ~/work/linux-torvalds $ /bin/grep file_operations fs/ext2/* -R
 fs/ext2/dir.c:const struct file_operations ext2_dir_operations = {
@@ -454,7 +477,9 @@ fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
 fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
 fs/ext2/namei.c:		inode->i_fop = &ext2_file_operations;
 ```
-소스를 뒤져보니 바로 file.c라는 파일에 정의되어있다는걸 알 수 있습니다.
+
+Yes, file.c has the definition of struct file_operations.
+
 ```
 const struct file_operations ext2_file_operations = {
     .llseek		= generic_file_llseek,
@@ -472,7 +497,10 @@ const struct file_operations ext2_file_operations = {
 	.splice_write	= iter_file_splice_write,
 };
 ```
-시스템콜에서 read_iter와 write_iter를 호출할 것이니, generic_file_read_iter와 generic_file_write_iter부터 코드를 따라가보면 되겠네요.
+We already know read_iter and write_iter are called by system-call read and write
+So let's trace generic_file_read_iter and generic_file_write_iter with source code.
+After I investigate some source files, I found out following callstack.
+
 ```
 generic_file_read_iter
 -->do_generic_file_read
@@ -486,7 +514,9 @@ generic_file_write_iter
 --> grab_cache_page_write_begin 
 --> pagecache_get_page*
 ```
-참고로 a_ops는 inode.c 파일에 정의되어있습니다.
+
+And address_space_operations are defined in fs/ext2/inode.c like following because inode should have it.
+
 ```
 const struct address_space_operations ext2_aops = {
     .readpage		= ext2_readpage,
@@ -502,11 +532,12 @@ const struct address_space_operations ext2_aops = {
 	.error_remove_page	= generic_error_remove_page,
 };
 ```
-mybrd의 콜스택을 분석해본 결과와 중복되는 콜스택이 나타납니다.
 
-읽기의 경우에는 do_generic_file_read부터, 쓰기에는 block_write_begin부터가 중복됩니다. 따라서 우리는 이 함수들부터 코드를 읽어보겠습니다.
+There are duplicated functions in callstacks of mybrd driver and ext2 filesystem.
+The duplicated functions consists of the virtual filesystem and block layer.
 
-##장치에서 페이지캐시로 데이터 읽어오기
+## 장치에서 페이지캐시로 데이터 읽어오기
+
 데이터를 읽을 때 콜스택을 보면 mybrd블럭 장치를 직접 읽을 경우와 파일시스템에 존재하는 파일을 읽을 경우 모두 do_generic_file_read을 호출하는걸 알 수 있습니다. 이 함수를 간단하게 분석해보면 페이지캐시가 어떻게 동작하는지, 언제 페이지캐시에서 블럭 장치를 읽어서 페이지캐시를 추가하는지 등을 알아보겠습니다.
 
 리눅스 소스를 보시면서 글을 읽으시길 바랍니다. 소스를 하나하나 복사하는건 의미가 없으니까요. 나중에 4.10이 되든, 5.0이 나오든 소스는 바뀝니다. 하지만 디자인과 코드의 목표는 남습니다. 페이지캐시를 구현하는 방법은 달라지지만 페이지캐시의 목적과 큰 디자인은 오래가겠지요. 그러니 소스 한줄한줄보다는 왜 이렇게 구현했는가 목적이 뭔가를 생각하는게 처음 커널을 분석할때 필요한 태도인것 같습니다. 나중에 실무에서나 취미로나 버그를 잡을 때 특정 버전의 코드를 더 깊게 봐야할때가 있겠지요.
