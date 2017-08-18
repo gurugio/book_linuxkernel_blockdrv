@@ -546,16 +546,15 @@ Please check kernel sources as read this document.
 ### arguments
 
 Followings are arguments of do_generic_file_read().
-* struct file *filep: 읽을 파일에 해당하는 file 객체입니다. file 구조체의 f_mapping이 struct address_space 객체를 가르키는 포인터입니다.
-* loff_t *ppos: read시스템콜을 호출하기전에 lseek 시스템콜을 써서 파일의 어디부터 읽을지를 선택합니다. lseek시스템콜은 실질적으로 어떤 처리를 하는게 아니라 struct file 객체의 f_pos 필드에 위치를 기록했다가 read나 write 시스템 콜이 호출되었을 때 읽어서 사용합니다.
- * 페이지 캐시는 페이지단위로 데이터가 저장되어있습니다. 따라서 페이지캐시의 radix-tree에서 사용할 키값은 ppos 값을 페이지 크기로 나눈 값이 되겠지요.
-* struct iov_iter *iter: 파일시스템에서 사용하는 자료구조입니다. 페이지캐시에서 사용되는건 아니므로 http://revdev.tistory.com/55 를 참고하시기 바랍니다.
- * 참고 추가: https://lwn.net/Articles/625077/
-* ssize_t written: generic_file_read_iter에서 direct IO가 발생해서 읽기가 일부 처리된 경우에 얼마나 읽기가 끝났는지 알려주는 값입니다. 그냥 함수가 호출될때의 값은 0으로 생각해도 됩니다. 데이터를 읽으면서 written의 값이 증가하고 읽기가 끝나면 written 값을 반환합니다.
+* struct file *filep: pointer to a object of struct file. 
+* loff_t *ppos: offset to start reading that can be set by lseek system-call
+* struct iov_iter *iter: this is by file system, not the page cache
+  * refer to https://lwn.net/Articles/625077/
+* ssize_t written: amount of data already read before do_generic_file_read
 
 ### find_get_page (= pagecache_get_page)
 
-find_get_page는 pagecache_get_page를 호출하는 wrapper 함수입니다.
+find_get_page() is a wrapper of pagecache_get_page()
 
 find_get_entry함수를 호출해서 패이지캐시에 이미 해당 offset이 있는지를 찾습니다. find_get_page에서 pagecache_get_page를 호출할 때 fgp_flags 값과 gfp_mask 값을 0으로 호출했으므로 결국 페이지캐시에 해당 offset이 없으면 null을 반환합니다.
 
