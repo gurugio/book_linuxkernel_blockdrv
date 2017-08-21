@@ -407,7 +407,7 @@ WRITE: int_ret_from_sys_call
 --> blkdev_close
 --> blkdev_put
 --> __blkdev_put
---> filemape_write_and_wait
+--> filemap_write_and_wait
 --> __filemap_fdatawrite_range
 --> do_writepages
 --> generic_writepages
@@ -650,87 +650,17 @@ Now it calls ``__block_write_begin()`` that does followings:
 Now the data is included in the page cache.
 Please notice that data is not written to disk yet.
 
-## flush the page cache
-### /proc/sys/vm/drop_caches
+## flush data from the page cache into the disk
 
-/proc/ 디렉토리는 커널의 정보와 현재 실행중인 프로세스들의 정보가 있는 곳입니다. 이중에서 유명한게 페이지캐시들을 해지시켜서 가용 메모리를 확보하는 /proc/sys/vm/drop_caches가 있습니다. 이 파일이 어떻게 사용되는지를 알면 언제 어떻게 페이지캐시를 해지하는지를 알 수 있겠지요.
+We already checked that close system-call flushes the data from the page cach into the disk.
+Closing the block device file releases the object of struct block_device and flush all data of the block device.
+Of course, if there are other processes holding the block disk, data is not released.
 
-일단 /proc/sys/ 디렉토리를 만드는 코드는 kernel/sysctl.c 에 있는 sysctl_init 함수입니다. 이 함수에서 sysctl_base_table이라는 테이블을 사용하는데 이게 /proc/sys/ 디렉토리 밑에 생성할 디렉토리들의 테이블입니다. 그럼 우리는 vm이라는 디렉토리를 만드는 vm_table을 봐야겠네요.
+Block layer calls callback function in mapping->a_ops->writepage that is blkdev_writepage().
+And blkdev_writepage calls block_write_full_page() that calls ``__block_write_full_page()``.
+Let's look into ``__block_write_full_page()`` briefly.
 
-Let's start with /proc/sys/vm/drop_caches to investigate the page cache flush.
-
-/proc/sys/ directory is created by sysctl_init() in kernel/sysctl.c file.
-This function uses sysctl_base_table table that is an array of child directories of /proc/sys/.
-/proc/sys/vm/ is represented by "struct ctl_Table vm_table", so let's follow vm_table object.
-
-vm_table defines the file name, attributes, handler and etc.
-drop_cache file is defined as following.
-
-```
-static struct ctl_table vm_table[] = {
-... skip ...
-    {
-		.procname	= "drop_caches",
-		.data		= &sysctl_drop_caches,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= drop_caches_sysctl_handler,
-		.extra1		= &one,
-		.extra2		= &four,
-	},
-```
-drop_cache_sysctl_handler() calls following functions:
-* iterate_supers -> drop_pagecache_sb -> invalidate_mapping_pages -> invalidate_inode_page -> invalidate_complete_page
-
-Core functions of invalidate_complete_page are:
-* try_to_release_page -> mapping->a_ops->releasepage -> blkdev_releasepage
-  * free buffer heads exist in the page
-* remove_mapping -> __remove_mapping -> __delete_from_page_cache
-  * extract the page from the page cache
-  * set NULL to page->mapping
-  * decrease the size of page cache in /proc/zoneinfo
-* set page reference counter to 1
-  * Only the process, which commands page cache flushing, references the page, so the ref-counter should be 1
-  * Therefere when ``echo 1 > /proc/sys/vm/drop_caches`` command finishes, the pages are freed.
-
-## 페이지캐시에서 장치로 데이터 쓰기
-
-delete_from_page_cache를 보면 페이지를 해지하기전에 페이지의 데이터를 장치로 보내는 부분이 없습니다. 페이지에 만약 새로운 데이터가 있고, 아직 장치에 쓰기 전이라면 페이지를 해지하기전에 데이터를 flush해야할텐데, 그건 어디에서 할까요?
-
-이전에 mybrd의 mybrd_make_request_fn 함수에 dump_stack을 호출하도록 해서 콜스택을 확인했었습니다. 그때 어플의 데이터가 페이지캐시에 써질때와 페이지캐시에서 드라이버로 써질때가 다르다는걸 확인했었습니다. 또 방금 페이지캐시를 해지할때 페이지의 데이터를 장치에 쓰지 않는다는걸 알았습니다. 그러므로 뭔가 페이지의 데이터를 장치에 쓰는 별도의 루틴이 있다는 것을 알게됩니다. 
-
-정확하게따지면 커널이 블럭 장치의 데이터를 flush하는 몇가지 시점이 있습니다. 그 시점들에 대한 설명은 약간 블럭 장치의 범위를 벋어나므로 블럭 장치의 flush에만 집중하기 위해서 fsync 시스템콜을 간단하게 알아보겠습니다.
-
-약간 커널 소스를 검색하는 요령이 생기신 분들은 fsync로 검색하실 수도 있겠지만 저는 이게 시스템 콜인걸 알고있으므로 먼저 SYSCALL_DEFINE을 검색해보는것도 방법이라고 생각합니다.
-```
-$ grep SYSCALL_DEFINE * -IR | grep sync
-arch/s390/kernel/compat_linux.c:COMPAT_SYSCALL_DEFINE6(s390_sync_file_range, int, fd, u32, offhigh, u32, offlow,
-arch/tile/kernel/compat.c:COMPAT_SYSCALL_DEFINE6(sync_file_range2, int, fd, unsigned int, flags,
-fs/sync.c:SYSCALL_DEFINE0(sync)
-fs/sync.c:SYSCALL_DEFINE1(syncfs, int, fd)
-fs/sync.c:SYSCALL_DEFINE1(fsync, unsigned int, fd)
-fs/sync.c:SYSCALL_DEFINE1(fdatasync, unsigned int, fd)
-fs/sync.c:SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
-fs/sync.c:SYSCALL_DEFINE4(sync_file_range2, int, fd, unsigned int, flags,
-mm/msync.c:SYSCALL_DEFINE3(msync, unsigned long, start, size_t, len, int, flags)
-```
-sync 시스템콜도 있지만 이건 시스템 전체의 데이터를 flush하므로 더 복잡할 것이니 fsync만 생각하겠습니다.
-
-fsync는 바로 do_sync를 호출하네요. 계속 따라가다보면
-```
-vfs_fsync
-vfs_fsync_range
-file->f_ops->fsync = blkdev_fsync
-filemap_write_and_wait_range & blkdev_issue_flush
-```
-
-이런 순서로 함수들이 나타납니다.
-
-사실 filemap_write_and_wait_range는 이전에 콜스택을 확인할 때 나왔던 함수입니다. 그리고 blkdev_issue_flush는 아무런 정보도 없는 dummy bio를 만들고, request-queue를 비우는 WRITE_FLUSH 명령을 request-queue로 전달하는 매우 간단한 함수입니다. 그러니 filemap_write_and_wait_range가 페이지캐시와 관련이 있겠네요.
-
-커널의 콜스택은 이미 이전에 확인했으니 가장 핵심적인 함수 __block_write_full_page만 간략하게 보겠습니다.
-
-####__block_write_full_page
+### ``__block_write_full_page``
 
 함수가 시작되면 우선 create_page_buffers 함수로 해당 페이지의 버퍼헤드를 찾습니다. 페이지하나에 여러개의 블럭이 있다면 버퍼헤드도 여러개이겠지만, 장치 파일의 페이지에는 하나의 버퍼헤드만 있을 것입니다.
 
@@ -740,4 +670,12 @@ struct writeback_control 타입의 wbc라는 객체가 있는데 이 객체는 �
 
 만약 동적으로 마운트된 장치가 umount될때라면 해당 블럭 장치의 페이지 캐시를 모두 없애야할 것입니다. 하지만 시스템에 가용 메모리가 부족한 상황일때, 모든 페이지 캐시를 없앤다면 순간적으로 시스템이 정지된것처럼 보일 수도 있고, 시스템의 성능이 순간적으로 낮아질 수 있습니다. 따라서 최대한 페이지 캐시를 유지하면서 약간의 페이지 캐시만을 없애서 필요한 메모리만 할당될 수 있도록 균형을 맞춰야합니다. 그럴때 얼마의 메모리를 확보해야하는지 등등의 정보를 전달하는게 wbc 객체입니다. fsync이외에도 메모리 할당이 실패하는 등 페이지캐시가 해지되는 경우는 많습니다만 결국엔 같은 함수로 처리될 것이고 wbc 객체의 정보만 달라질 것입니다.
 
+First it calls create_page_buffers() to find buffer heads of the page.
+And it locks all buffer heads and creates wbc object.
 
+The wbc object represents how much page cache is freed.
+For example, if we commands un-mounting of a disk, wbc is initialized to free all page cache of the disk and kernel will flush all pages.
+If a page is locked, kernel will wait.
+Or in normal case, kernel frees non-locked pages.
+
+Then submit_bh_wbc() is called to flush each buffer head.
