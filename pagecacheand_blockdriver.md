@@ -662,14 +662,6 @@ Let's look into ``__block_write_full_page()`` briefly.
 
 ### ``__block_write_full_page``
 
-함수가 시작되면 우선 create_page_buffers 함수로 해당 페이지의 버퍼헤드를 찾습니다. 페이지하나에 여러개의 블럭이 있다면 버퍼헤드도 여러개이겠지만, 장치 파일의 페이지에는 하나의 버퍼헤드만 있을 것입니다.
-
-어쨌든 버퍼헤드를 확인하고 버퍼헤드에 락을 거는 등의 사전 작업을 한 후 submit_bh_wbc를 호출합니다. submit_bh_wbc에서 bio를 할당하고 bio의 필드를 셋팅하고 submit_bio를 호출하는 익숙한 코드를 실행합니다.
-
-struct writeback_control 타입의 wbc라는 객체가 있는데 이 객체는 페이지 캐시를 얼마나 완료했는지를 관리하는 객체입니다. 상황에 따라 특정 파일에 속한 페이지 캐시를 모두 없애야할 때도 있고, 약간의 페이지 캐시만 없애야할 때도 있습니다.
-
-만약 동적으로 마운트된 장치가 umount될때라면 해당 블럭 장치의 페이지 캐시를 모두 없애야할 것입니다. 하지만 시스템에 가용 메모리가 부족한 상황일때, 모든 페이지 캐시를 없앤다면 순간적으로 시스템이 정지된것처럼 보일 수도 있고, 시스템의 성능이 순간적으로 낮아질 수 있습니다. 따라서 최대한 페이지 캐시를 유지하면서 약간의 페이지 캐시만을 없애서 필요한 메모리만 할당될 수 있도록 균형을 맞춰야합니다. 그럴때 얼마의 메모리를 확보해야하는지 등등의 정보를 전달하는게 wbc 객체입니다. fsync이외에도 메모리 할당이 실패하는 등 페이지캐시가 해지되는 경우는 많습니다만 결국엔 같은 함수로 처리될 것이고 wbc 객체의 정보만 달라질 것입니다.
-
 First it calls create_page_buffers() to find buffer heads of the page.
 And it locks all buffer heads and creates wbc object.
 
@@ -679,3 +671,6 @@ If a page is locked, kernel will wait.
 Or in normal case, kernel frees non-locked pages.
 
 Then submit_bh_wbc() is called to flush each buffer head.
+submit_bh_wbc() increases the record of wbc object and creates bio.
+And submit_bh_wbc() calls submit_bio() to pass bio to the block layer.
+The block layer function generic_make_request() will pass bio to mybrd driver.
