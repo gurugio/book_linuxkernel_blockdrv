@@ -650,15 +650,25 @@ Now it calls ``__block_write_begin()`` that does followings:
 Now the data is included in the page cache.
 Please notice that data is not written to disk yet.
 
-## 페이지캐시에 있는 페이지 해지
+## flush the page cache
 ### /proc/sys/vm/drop_caches
 
 /proc/ 디렉토리는 커널의 정보와 현재 실행중인 프로세스들의 정보가 있는 곳입니다. 이중에서 유명한게 페이지캐시들을 해지시켜서 가용 메모리를 확보하는 /proc/sys/vm/drop_caches가 있습니다. 이 파일이 어떻게 사용되는지를 알면 언제 어떻게 페이지캐시를 해지하는지를 알 수 있겠지요.
 
 일단 /proc/sys/ 디렉토리를 만드는 코드는 kernel/sysctl.c 에 있는 sysctl_init 함수입니다. 이 함수에서 sysctl_base_table이라는 테이블을 사용하는데 이게 /proc/sys/ 디렉토리 밑에 생성할 디렉토리들의 테이블입니다. 그럼 우리는 vm이라는 디렉토리를 만드는 vm_table을 봐야겠네요.
 
-vm_table이라는 테이블을 보면 /proc/sys/vm/ 디렉토리에 생성할 파일들의 이름과 속성, 그리고 처리 함수의 이름 등이 있습니다. 우리가 봐야할건 drop_caches 항목입니다.
+Let's start with /proc/sys/vm/drop_caches to investigate the page cache flush.
+
+/proc/sys/ directory is created by sysctl_init() in kernel/sysctl.c file.
+This function uses sysctl_base_table table that is an array of child directories of /proc/sys/.
+/proc/sys/vm/ is represented by "struct ctl_Table vm_table", so let's follow vm_table object.
+
+vm_table defines the file name, attributes, handler and etc.
+drop_cache file is defined as following.
+
 ```
+static struct ctl_table vm_table[] = {
+... skip ...
     {
 		.procname	= "drop_caches",
 		.data		= &sysctl_drop_caches,
@@ -669,69 +679,21 @@ vm_table이라는 테이블을 보면 /proc/sys/vm/ 디렉토리에 생성할 �
 		.extra2		= &four,
 	},
 ```
-참고로 제가 어떻게 sysctl_base_table이라는 테이블이 존재하는지, vm_table이라는게 존재하는지 찾을 수 있었을까요? 이 강좌를 쓰기전에는 사실 어딘가 그런 테이블이 있겠지라고만 생각했었습니다. 당연히 어딘가에 "drop_caches"라는 파일 이름이 소스 파일에 써있을거라고만 생각했습니다. 파일 이름을 동적으로 만들지는 않을거니까요. 이렇게 뭔가 검색할 거리가 있으면 일단 grep으로 찾아보는 거지요. grep으로 검색하면 소스가 아닌 txt 파일이나 기타 임시 파일들도 검색합니다. 그래서 cscope나 global등의 태깅툴에서 소스에서만 검색하는 기능을 써는게 좋을때도 있습니다. 아래는 제가 검색해본 결과입니다.
-```
-$ grep -IR drop_caches *
-Documentation/sysctl/vm.txt:- drop_caches
-Documentation/sysctl/vm.txt:drop_caches
-Documentation/sysctl/vm.txt:    echo 1 > /proc/sys/vm/drop_caches
-Documentation/sysctl/vm.txt:	echo 2 > /proc/sys/vm/drop_caches
-Documentation/sysctl/vm.txt:	echo 3 > /proc/sys/vm/drop_caches
-Documentation/sysctl/vm.txt:`sync' prior to writing to /proc/sys/vm/drop_caches.  This will minimize the
-Documentation/sysctl/vm.txt:	cat (1234): drop_caches: 3
-Documentation/sysctl/vm.txt:with your system.  To disable them, echo 4 (bit 3) into drop_caches.
-Documentation/cgroups/memory.txt:A sync followed by echo 1 > /proc/sys/vm/drop_caches will help get rid of
-Documentation/cgroups/blkio-controller.txt:	echo 3 > /proc/sys/vm/drop_caches
-drivers/gpu/drm/i915/i915_debugfs.c:i915_drop_caches_get(void *data, u64 *val)
-drivers/gpu/drm/i915/i915_debugfs.c:i915_drop_caches_set(void *data, u64 val)
-drivers/gpu/drm/i915/i915_debugfs.c:DEFINE_SIMPLE_ATTRIBUTE(i915_drop_caches_fops,
-drivers/gpu/drm/i915/i915_debugfs.c:			i915_drop_caches_get, i915_drop_caches_set,
-drivers/gpu/drm/i915/i915_debugfs.c:	{"i915_gem_drop_caches", &i915_drop_caches_fops},
-fs/drop_caches.c:int sysctl_drop_caches;
-fs/drop_caches.c:int drop_caches_sysctl_handler(struct ctl_table *table, int write,
-fs/drop_caches.c:    	if (sysctl_drop_caches & 1) {
-fs/drop_caches.c:		if (sysctl_drop_caches & 2) {
-fs/drop_caches.c:			pr_info("%s (%d): drop_caches: %d\n",
-fs/drop_caches.c:				sysctl_drop_caches);
-fs/drop_caches.c:		stfu |= sysctl_drop_caches & 4;
-fs/Makefile:obj-$(CONFIG_SYSCTL)		+= drop_caches.o
-fs/btrfs/inode.c:	 * echo 2 > /proc/sys/vm/drop_caches   # evicts inode
-include/linux/mm.h:extern int sysctl_drop_caches;
-include/linux/mm.h:int drop_caches_sysctl_handler(struct ctl_table *, int,
-kernel/futex.c:	 * prevents drop_caches from setting mapping to NULL beneath us.
-kernel/sysctl.c:		.procname	= "drop_caches",
-kernel/sysctl.c:		.data		= &sysctl_drop_caches,
-kernel/sysctl.c:		.proc_handler	= drop_caches_sysctl_handler,
-kernel/sysctl_binary.c:	{ CTL_INT,	VM_DROP_PAGECACHE,		"drop_caches" },
-System.map:ffffffff811c40c0 T drop_caches_sysctl_handler
-System.map:ffffffff8143cd30 t i915_drop_caches_get
-System.map:ffffffff814437b0 t i915_drop_caches_fops_open
-System.map:ffffffff81443ca0 t i915_drop_caches_set
-System.map:ffffffff81a793a0 r i915_drop_caches_fops
-System.map:ffffffff820fc864 B sysctl_drop_caches
-tools/testing/selftests/vm/run_vmtests:		echo 3 > /proc/sys/vm/drop_caches
-```
-Document/sysctl/ 디렉토리에 관련된 문서가 있다는걸 찾을 수 있습니다. vm.txt를 읽어보면 사용법이나 구현에 대한 설명 등이 있을것 같습니다. 그 외에 drivers 디렉토리에 있는 파일들은 당연히 우리와 상관이 없겠지요. 우리는 커널이 제공하는 기능을 찾는 것이니까요. 그럼 fs/drop_caches.c나 kernel/sysctl.c 파일 등이 남는데요 이 파일들을에 drop_caches이라는 파일을 만드는 코드가 있나 봅니다. 당연히 create("drop_caches")라는 코드는 없을겁니다. 뭔가 파일 이름을 정의하는 데이터구조와 파일을 생성하는 코드가 나눠져있을 것입니다. 커널 개발자들은 작은것 하나라도 나중에 변경될 수 있는 것은 반드시 데이터로 분리합니다. 코드안에 create("drop_caches")라고 데이터를 박아넣지 않습니다. 그런 철학을 생각하면서 찾다보면 여러가지를 배울 수 있습니다.
+drop_cache_sysctl_handler() calls following functions:
+* iterate_supers -> drop_pagecache_sb -> invalidate_mapping_pages -> invalidate_inode_page -> invalidate_complete_page
 
-어쨌든 이제 drop_caches_sysctl_handler이 호출하는 함수를 따라가보면서 페이지캐시와 관련된게 있는지 찾아보면 됩니다. 
+Core functions of invalidate_complete_page are:
+* try_to_release_page -> mapping->a_ops->releasepage -> blkdev_releasepage
+  * free buffer heads exist in the page
+* remove_mapping -> __remove_mapping -> __delete_from_page_cache
+  * extract the page from the page cache
+  * set NULL to page->mapping
+  * decrease the size of page cache in /proc/zoneinfo
+* set page reference counter to 1
+  * Only the process, which commands page cache flushing, references the page, so the ref-counter should be 1
+  * Therefere when ``echo 1 > /proc/sys/vm/drop_caches`` command finishes, the pages are freed.
 
-Document/sysctl/vm.txt 파일을 보면 drop_caches 파일에 1을 쓰면 페이지캐시를 제거한다고 합니다. 따라서 iterate_supers(drop_pagaecache_sb, NULL) 코드가 우리가 찾는 코드입니다. 뭔가 이름도 페이지캐시와 관련이 있을것 같습니다. 이런식으로 약간은 추리를 하면서 코드를 추적할 필요도 있습니다.
-
-###delete_from_page_cache
-
-drop_caches_sysctl_handler를 분석하는걸 일일이 설명할 필요는 없을것 같습니다. 바로 페이지캐시의 페이지 하나를 해지를 처리하는 delete_from_page_cache를 간단히 보겠습니다.
-
-크게 __delete_from_page_cache와 mapping->a_ops->freepage 두개의 함수 호출로 이루어져있습니다.
-
-__delete_from_page_cache를 간략하게 보면
-* 페이지는 이미 잠겨있는 상태여야합니다.
-* page_cache_tree_delete: radix-tree에서 해당 페이지를 빼내야겠지요.
-* page->mapping = NULL: adress_space 포인터는 이제 필요없으니 지웁니다.
-* __dec_zone_page_state(page, NR_FILE_PAGES): /proc/zoneinfo의 통계 정보에서 페이지캐시의 크기를 줄입니다.
-
-블럭 장치의 address_space_operations는 def_blk_aops 입니다. 확인해보면 freepage는 정의하지 않았네요. 페이지가 잠겨있고 radix-tree에서 빠졌으면, 다른 곳에서 페이지를 사용하지 않는다면 해지해도 됩니다. 따라서 마지막으로 페이지에 대한 참조를 줄이는 page_cache_release를 호출합니다. 참조카운터가 0이되면 자동으로 해지가 되서 버디리스트에 들어가겠네요. page_cache_get을 언제 호출했는지 기억이 나시나요?
-
-### 페이지캐시에서 장치로 데이터 쓰기
+## 페이지캐시에서 장치로 데이터 쓰기
 
 delete_from_page_cache를 보면 페이지를 해지하기전에 페이지의 데이터를 장치로 보내는 부분이 없습니다. 페이지에 만약 새로운 데이터가 있고, 아직 장치에 쓰기 전이라면 페이지를 해지하기전에 데이터를 flush해야할텐데, 그건 어디에서 할까요?
 
