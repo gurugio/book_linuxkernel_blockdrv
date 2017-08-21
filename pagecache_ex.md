@@ -5,6 +5,69 @@ And I added some code to mybrd_ioctl() of mybrd driver.
 
 source: https://github.com/gurugio/mybrd/blob/ex-pagecache/mybrd.c
 
+## ioctl of mybrd
+
+Following is mybrd_ioctl() that is added for this chapter.
+
+```
+static int mybrd_ioctl(struct block_device *bdev, fmode_t mode,
+                        unsigned int cmd, unsigned long arg)
+{
+        int error = 0;
+        struct inode *in = bdev->bd_inode;
+        struct address_space *asp = in->i_mapping;
+        struct radix_tree_root *root = &asp->page_tree;
+        struct page *p;
+        unsigned long index = 0;
+
+        pr_warn("asp: nrpages=%d host=%p\n",
+                (int)asp->nrpages, asp->host);
+        pr_warn("radix-tree: height=%d rnode=%p rnode-count=%d\n",
+                root->height, root->rnode, root->rnode ? root->rnode->count:-1);
+
+        for (index = 0; index < 10; index++) {
+                p = radix_tree_lookup(root, index);
+                if (p)
+                        pr_warn("index=%d page=%p pindex=%d\n",
+                                (int)index, p, (int)p->index);
+                else
+                        pr_warn("no page-cache index=%d\n", (int)index);
+        }
+
+        for (index = 0; index < 10; index++) {
+                struct buffer_head *bh[10];
+                bh[index] = __bread(bdev, index, PAGE_SIZE);
+                pr_warn("bh: index=%d state=%x page=%p blocknr=%d size=%d\n",
+                        (int)index, (int)bh[index]->b_state,
+                        bh[index]->b_page, bh[index]->b_blocknr, bh[index]->b_size);
+        }
+
+        return error;
+}
+```
+
+We don't use cmd value.
+Whenever user application calls ioctl, mybrd driver prints information of pages in radix-tree.
+And mybrd driver prints information of buffer heads for mybrd device.
+Mybrd driver uses ``__bread()`` to find buffer heads of mybrd device.
+``__bread()`` function gets block device, number of block and size of block, and returns buffer head including the index.
+If there is no such block in the page cache, it adds new page into the page cache and creates new buffer head and returns.
+
+## application
+
+Let's look into the application.
+It reads 10K data from mybrd disk.
+And it calls ioctl with command value 0x1234.
+Actually the command value is meaningless.
+Mybrd driver does not care the comman value.
+Next the application writes 10K data and calls ioctl.
+Finally it closes the device file.
+
+What we should care is how the page cache works if application read/write a block device.
+Let's build this file with ``gcc a.c -static`` command and run on qemu VM.
+Please refer following document for setup qemu VM.
+* https://github.com/gurugio/book_linuxkernel_blockdrv/blob/master/environment.md
+
 ```
 #include <stdio.h>
 #include <sys/types.h>
@@ -48,6 +111,10 @@ int main(void)
     return 0;
 }
 ```
+
+## result
+
+Following is the result of the program.
 
 ```
 / # ./a.out
@@ -401,3 +468,45 @@ write 40960-bytes
 [    5.207655] mybrd: end queue_rq
 [    5.207909] a.out (1036) used greatest stack depth: 13424 bytes left
 ```
+
+mybrd_ioctl function prints pages in the page cache and buffer heads.
+Yes, the same pages are included in the page cache and linked to buffer heads.
+
+After writing data, the state of buffer head was changed from 0x21 to 0x23.
+Following is the flags of buffer head.
+```
+enum bh_state_bits {
+	BH_Uptodate,	/* Contains valid data */
+	BH_Dirty,	/* Is dirty */
+	BH_Lock,	/* Is locked */
+	BH_Req,		/* Has been submitted for I/O */
+	BH_Uptodate_Lock,/* Used by the first bh in a page, to serialise
+			  * IO completion of other buffers in the page
+			  */
+
+	BH_Mapped,	/* Has a disk mapping */
+	BH_New,		/* Disk mapping was newly created by get_block */
+	BH_Async_Read,	/* Is under end_buffer_async_read I/O */
+	BH_Async_Write,	/* Is under end_buffer_async_write I/O */
+	BH_Delay,	/* Buffer is not yet allocated on disk */
+	BH_Boundary,	/* Block is followed by a discontiguity */
+	BH_Write_EIO,	/* I/O error on write */
+	BH_Unwritten,	/* Buffer is allocated on disk but not written */
+	BH_Quiet,	/* Buffer Error Prinks to be quiet */
+	BH_Meta,	/* Buffer contains metadata */
+	BH_Prio,	/* Buffer should be submitted with REQ_PRIO */
+	BH_Defer_Completion, /* Defer AIO completion to workqueue */
+
+	BH_PrivateStart,/* not a state bit, but the first bit available
+			 * for private allocation by other entities
+			 */
+};
+```
+
+0x21 is BH_Uptodate and BH_Mapped that means data of the buffer head is copied from disk and the valid data.
+After writing, BH_Dirty flag is added because page data is changed and should be flushed into the disk.
+
+Please remember that after application terminated, mybrd block device has no page cache because closing the block device file flushes all page caches.
+free command shows the same status before/after the application.
+We cannot check how much page cache mybrd generates with free command.
+That is why I made an application and ioctl() handler in mybrd driver.
