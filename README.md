@@ -41,7 +41,7 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 * [multiqueue-mode](multiqueue-mode.md) - done
 * [pagecache and blockdriver](pagecacheand_blockdriver.md) - done
 * [experiement for the page cache](pagecache_ex.md) - done
-* [page-flags](page-flags.md)
+* [page-flags](page-flags.md) - done
 * [system calls and flushing block device](systemcall_flushblock.md)
 * [per-cpu variable and statistics (v2.6.11)](per-cpu_statistics.md)
 * [wait-queue](wait-queue.md)
