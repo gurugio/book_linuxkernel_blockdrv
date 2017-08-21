@@ -1,8 +1,8 @@
-# 시스템콜과 블럭 장치 flush
+# system call and block device flushing
 
-뜬금없이 왜 시스템콜을 이야기하는지 이상하게 생각하실것 같은데요 왜냐면 우리가 콜스택을 추적해볼때 시스템콜이 나왔기 때문입니다.
+System call is usually starting point of device operations.
 
-아래는 dd로 mybrd장치에 쓰기를 했을 때 출력된 콜스택입니다.
+Following is callstack of reading mybrd with dd tool, as we saw in previous cahpter.
 ```
 [  194.612304] Call Trace:
 [  194.612474]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
