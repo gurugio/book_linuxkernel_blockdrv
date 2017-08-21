@@ -602,36 +602,25 @@ On the contrary, if you want to free a page in lru, you should extract it from l
 It look very long and complex but the core of this function is creating bio with mpage_alloc().
 
 Arguments of do_mpage_readpage() are:
-* struct bio *bio: 처음에는 NULL값입니다. mpage_alloc 함수로 새로 bio 객체를 만들으라는 의미입니다. 한번 bio를 만들고나면 다음 for 루프에서 계속 다음 페이지를 위한 정보를 추가합니다. 그래서 for 루프가 종료된 다음에는 모든 페이지의 IO를 위한 정보를 가지게됩니다.
-* struct page *page: 새로 할당해서 페이지캐시와 lru 리스트에 추가된 페이지입니다. 장치로부터 데이터를 읽어서 이 페이지에 저장합니다.
-* unsigned nr_pages: 남은 페이지 갯수
-* sector_t *last_block_in_bio: bio에서 처리할 마지막 블럭의 섹터 번호
-* struct buffer_head *map_bh: bio를 만들면서 생성된 버퍼 헤드
-* unsigned long *first_logical_block: 첫번째 블럭 번호
-* get_block_t get_block: 파일시스템에서 파일 오프셋을 실제 파일시스템의 블럭 번호로 바꿔서 bh->b_blocknr 필드에 저장하는 함수입니다. 파일이라는건 연속된 데이터이지만, 사실 파일이 디스크에 연속적으로 저장될 수는 없습니다. 디스크 여기저기에 데이터가 저장되고, 어떤 파일의 어떤 부분이 디스크의 어디에 저장되었는지를 관리하는게 파일시스템의 주된 역할입니다. 그러므로 파일시스템마다 다른 정보를 얻어올 수 있도록 함수포인터를 전달합니다. 블럭 장치의 경우 blkdev_get_block 함수 포인터를 전달합니다. 블럭 장치는 사실 파일시스템이 없고 디스크 전체가 연속된 데이터로 봅니다. 따라서 전달된 블럭 번호를 그대로 버퍼헤드에 기록합니다. ext2의 경우 ext2_get_block 함수가 사용되는데, 파일시스템의 슈퍼블럭을 읽는등 파일시스템 자체의 정보를 활용할 것입니다.
-* gfp_t gfp: bio객체를 할당할 때 쓸 페이지 할당 플래그
+* struct bio *bio: initial value is NULL, so new bio is created by mpage_alloc().
+* struct page *page: just created, and added into the page and lru list. Data from disk will be stored in the page.
+* unsigned nr_pages: amount of pages not mapped into bio yet
+* sector_t *last_block_in_bio: sector number of the last block in bio
+* struct buffer_head *map_bh: buffer head created for bio
+* unsigned long *first_logical_block: the first block number of bio
+* get_block_t get_block: A function changes the file offset into the block number and stores the block number at bh->b_blocknr field. File is virtually contigous data but not physically contiguous in the disk. So filesystem provides information which file block is stored where. If do_mpage_readpage is called for reading block device file, blkdev_get_block is passed as the get_block argument. Block device file considers the disk as a big contiguous file, so blkdev_get_block sets the block number at buffer head directly. Other filesystem, such as ext2, use its own mapping function, such as ext2_get_block.
+* gfp_t gfp: page allocation flag for bio allocation
 
-처음 do_mpage_readpage가 호출될 때는 bio가 NULL이고 map_bh의 b_state, b_size 값들도 0이므로  mpage_alloc으로 bio를 할당합니다.
-
-그 다음 bio_add_page가 호출되면서 bio의 bi_io_vec 필드에 새로운 페이지가 추가됩니다. 우리는 현재 블럭 장치의 페이지캐시를 만들고있으므로 블럭 크기가 곧 페이지 크기가 됩니다. 따라서 bi_io_vec에 추가될 IO 길이도 모두 4096이 됩니다. 한번에 한 페이지씩 읽는 것입니다. 드라이버에서 bio의 bi_io_vec 필드를 출력해봤을때 모두 길이가 4096인걸 확인했었습니다.
-
-mpage_readpages에서 루프를 돌면서 다시 do_mpage_readpage를 호출했을 때도 페이지의 크기와 블럭의 크기가 같으므로 사실상 버퍼헤드를 수정할 일은 없습니다. 매번 bio_add_page가 호출되면서 bio에 새로운 페이지를 추가하는 일이 사실상 전부입니다.
-
-참고로 mpage_alloc은 단순합니다. bio_alloc으로 bio를 만들고 꼭 필요한 필드를 셋팅합니다.
-* bio_alloc: struct bio 객체 생성
-* bio->bi_bdev: IO가 발생해야할 struct block_device 객체 포인터
-* bio->bi_iter.bi_sector: 첫번째 섹터 번호
-
-mpage_alloc은 첫번째 섹터 번호만 설정합니다. 추가 정보는 bio_add_page에서 추가합니다. bio_add_page 함수도 간단합니다. bio의 bi_io_vec 배열을 가져와서 bv_page, bv_len, bv_offset을 초기화하는데 블럭 장치는 한번에 한 페이지씩 읽으므로 bv_len은 항상 4096이되고 bv_offset은 0이 될 것입니다. bi_vcnt를 증가시켜서 bi_io_vec배열을 차례대로 초기화합니다.
+When do_mpage_readpage is called first, bio is NULL. So bio is allocated and a page is added.
+Next call for do_mpage_readpage, bio is already created, so only page is added again and again.
 
 ### mpage_bio_submit
 
-mpage_alloc으로 생성한 bio 객체를 submit_bio 함수에 전달합니다. 결국 submit_bio는 generic_make_request를 통해서 mybrd로 넘어갑니다. bio 처리가 끝나면 호출된 bio->bi_end_io 콜백함수는 mpage_end_io입니다. add_to_page_cache_lru에서 페이지를 잠궜으므로 mpage_end_io에서는 페이지 락을 풀고 페이지를 페이지의 데이터가 막 읽혀진 상태이니 uptodate 상태로 표시합니다. 그리고 다쓴 bio를 해지합니다.
-
-### copy_page_to_iter
-
-iter에는 유저 레벨의 버퍼에 대한 정보가 들어있습니다. page에 있는 데이터를 유저 레벨 버퍼로 복사합니다.
-iov_iter_count에서 iter->count 필드가 0이되면 do_generic_file_read가 종료됩니다.
+This function passes bio to the block layer via submit_bio().
+The submit_bio() passes bio into mybrd via generic_make_request().
+If bio processing is completed, the block layer calls callback function at bio->bi_end_io, which is set as mpage_end_io in mpage_bio_submit().
+The mpage_bio_submit unlock the page, which is locked by add_to_page_cache_lru(), and set status of the page as uptodate.
+And mpage_bio_submit releases bio object.
 
 ## block_write_begin: write data into the page cache
 
@@ -640,6 +629,8 @@ block_write_begin함수만 간략하게 분석해보겠습니다.
 block_write_begin은 grab_cache_page_write_begin와 __block_write_begin로 이루어져있습니다. grab_cache_page_write_begin은 pagecache_get_page를 호출합니다.
 
 pagecache_get_page는 이전에 find_get_page를 분석할 때 나온 함수입니다. 차이가 있다면 find_get_page에서는 fgp_flags가 0이고, gfp_mask가 0인데, grab_cache_page_write_begin에서는 fgp_flags와 gfp_mask에 값을 전달한다는 것입니다. find_get_page는 페이지캐시에 찾는 페이지가 없으면 NULL을 반환합니다. 하지만 grab_cache_page_write_begin은 pagecache_get_page에서 페이지를 할당해서 페이지캐시에 추가하기 때문에, 페이지 할당 플래그도 필요하고, 페이지를 할당하도록 FGP_CREAT 등의 플래그도 필요합니다.
+
+
 
 pagecache_get_page가 하는 일은 간단히보면
 * FGP_LOCK|FGP_ACCESSED|FGP_WRITE|FGP_CREAT 플래그를 받음
