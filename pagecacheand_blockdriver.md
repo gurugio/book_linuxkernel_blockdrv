@@ -624,31 +624,31 @@ And mpage_bio_submit releases bio object.
 
 ## block_write_begin: write data into the page cache
 
-block_write_begin함수만 간략하게 분석해보겠습니다.
+Let's look into block_write_begin() briefly.
 
-block_write_begin은 grab_cache_page_write_begin와 __block_write_begin로 이루어져있습니다. grab_cache_page_write_begin은 pagecache_get_page를 호출합니다.
+block_write_begin() consists of grab_cache_page_write_begin() which calls pagecache_get_page, and __block_write_begin().
 
-pagecache_get_page는 이전에 find_get_page를 분석할 때 나온 함수입니다. 차이가 있다면 find_get_page에서는 fgp_flags가 0이고, gfp_mask가 0인데, grab_cache_page_write_begin에서는 fgp_flags와 gfp_mask에 값을 전달한다는 것입니다. find_get_page는 페이지캐시에 찾는 페이지가 없으면 NULL을 반환합니다. 하지만 grab_cache_page_write_begin은 pagecache_get_page에서 페이지를 할당해서 페이지캐시에 추가하기 때문에, 페이지 할당 플래그도 필요하고, 페이지를 할당하도록 FGP_CREAT 등의 플래그도 필요합니다.
+We already looked into pagecache_get_page() when we investigated find_get_page().
+But here pagecache_get_page() is called with non-zero flags to allocate a page and add the page into the page cache.
 
+What pagecache_get_page() does is:
+* get FGP_LOCK|FGP_ACCESSED|FGP_WRITE|FGP_CREAT flag as argument
+* FGP_LOCK: lock the page if page of specified index is in the page cache
+* FGP_CREATE: allocate a page if there is no page in the page cache
+ * locking is not necessary
+ * set PG_referenced flag
+ * add the page into the page cache and the lru list
 
+Now it calls ``__block_write_begin()`` that does followings:
+* the page should be locked
+* create_page_buffers: allocate a buffer head and lock the page.
+* blocksize is the size of a block. mybrd driver set the block size as PAGE_SIZE.
+* block is the same to index.
+* call get_block (blkdev_get_block for block device file) to find block number and set the buffer head
+* set flags for the buffer head and the page
 
-pagecache_get_page가 하는 일은 간단히보면
-* FGP_LOCK|FGP_ACCESSED|FGP_WRITE|FGP_CREAT 플래그를 받음
-* FGP_LOCK: 페이지캐시에 페이지가 있으면 페이지 잠금
-* FGP_CREATE: 페이지캐시에 페이지가 없으면 페이지 할당
- * 새로 할당된 페이지이므로 락이 필요없음
- * PG_referenced 플래그 셋팅
- * 페이지캐시에 추가하고 lru 리스트에도 추가
-
-이제 페이지캐시에 페이지가 있는 상태에서 __block_write_begin이 호출됩니다.
-* 페이지는 반드시 잠겨있어야합니다.
-* create_page_buffers: 버퍼헤드를 하나 할당받아서 버퍼헤드에 페이지 포인터를 저장합니다. head는 페이지안에 저장된 첫번째 버퍼를 관리하는 버퍼헤드의 주소입니다. 아직 버퍼헤드에는 아무런 정보도 없습니다.
-* blocksize는 블럭의 크기인데 mybrd는 장치파일이므로 페이지 크기가 됩니다.
-* block은 index 값과 같습니다.
-* get_block (블럭 장치의 경우 blkdev_get_block)을 호출해서 버퍼헤드에 디스크 블럭 번호를 씁니다.
-* 페이지나 버퍼해드의 플래그들을 설정합니다. 
-
-페이지 캐시에 데이터를 쓸 준비가 끝났지만, 페이지캐시의 데이터를 장치에 쓰지는 않습니다.
+Now the data is included in the page cache.
+Please notice that data is not written to disk yet.
 
 ## 페이지캐시에 있는 페이지 해지
 ### /proc/sys/vm/drop_caches
