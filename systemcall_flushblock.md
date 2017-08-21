@@ -1,57 +1,26 @@
 # system call and block device flushing
 
-System call is usually starting point of device operations.
+System call is usually starting point of device operations as we investigated in previous chapters.
+Let's look into the system call in this chapter.
 
-Following is callstack of reading mybrd with dd tool, as we saw in previous cahpter.
-```
-[  194.612304] Call Trace:
-[  194.612474]  [<ffffffff8130dadf>] dump_stack+0x44/0x55
-[  194.612833]  [<ffffffff814fac32>] mybrd_make_request_fn+0x42/0x260
-[  194.613306]  [<ffffffff812efc8e>] generic_make_request+0xce/0x1a0
-[  194.613761]  [<ffffffff812efdc2>] submit_bio+0x62/0x140
-[  194.614158]  [<ffffffff8119fa78>] submit_bh_wbc.isra.38+0xf8/0x130
-[  194.614571]  [<ffffffff811a188d>] __block_write_full_page.constprop.43+0x10d/0x3a0
-[  194.615098]  [<ffffffff810ac8d5>] ? add_timer_on+0xd5/0x130
-[  194.615523]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
-[  194.615858]  [<ffffffff811a1e50>] ? I_BDEV+0x10/0x10
-[  194.616238]  [<ffffffff811a1c60>] block_write_full_page+0x140/0x160
-[  194.616654]  [<ffffffff811a2853>] blkdev_writepage+0x13/0x20
-[  194.617107]  [<ffffffff8112344e>] __writepage+0xe/0x30
-[  194.617518]  [<ffffffff81123e67>] write_cache_pages+0x1d7/0x4c0
-[  194.617942]  [<ffffffff81194a30>] ? __mark_inode_dirty+0x2c0/0x310
-[  194.618412]  [<ffffffff81123440>] ? domain_dirty_limits+0x120/0x120
-[  194.618798]  [<ffffffff8111a4ee>] ? unlock_page+0x5e/0x60
-[  194.619222]  [<ffffffff8112418c>] generic_writepages+0x3c/0x60
-[  194.619616]  [<ffffffff81125ed9>] do_writepages+0x19/0x30
-[  194.619972]  [<ffffffff8111b2ec>] __filemap_fdatawrite_range+0x6c/0x90
-[  194.620456]  [<ffffffff8111b357>] filemap_write_and_wait+0x27/0x70
-[  194.620923]  [<ffffffff811a29e9>] __blkdev_put+0x69/0x220
-[  194.621325]  [<ffffffff811a3156>] ? blkdev_write_iter+0xd6/0x100
-[  194.621723]  [<ffffffff811a2f97>] blkdev_put+0x47/0x100
-[  194.622102]  [<ffffffff811a3070>] blkdev_close+0x20/0x30
-[  194.622502]  [<ffffffff8116f7e7>] __fput+0xd7/0x1e0
-[  194.622851]  [<ffffffff8116f929>] ____fput+0x9/0x10
-[  194.623227]  [<ffffffff810702ae>] task_work_run+0x6e/0x90
-[  194.623585]  [<ffffffff810021a2>] exit_to_usermode_loop+0x92/0xa0
-[  194.624041]  [<ffffffff81002b2e>] syscall_return_slowpath+0x4e/0x60
-[  194.624567]  [<ffffffff8188f30c>] int_ret_from_sys_call+0x25/0x8f
-```
-콜스택의 처음 시작이 int_ret_from_sys_call입니다. 딱 이름부터 뭔가 시스템콜과 연관이 있을것 같지 않나요? 우리는 이 콜스택이 페이지캐시에 있는 페이지들의 데이터가 장치로 전달되는 과정이라는걸 알았습니다. 그런데 이런 데이터 flush가 정확히 언제언제 발생되는건지는 아직 알지 못합니다.
-
-그리고 분석하다보니 read나 write 등 시스템콜부터 드라이버까지 대강 따라가봤는데 대강 어떻게 시스템콜들이 만들어지는지는 알아두면 좋을것 같습니다.
-
-시스템콜 호출에 대해서는 최근에 많이 바껴져서 우리도 확인했듯이 SYSCALL_DEFINE같은 매크로를 쓰기도하고 어셈블리 코드도 들어가는 등 분석이 쉽지 않습니다. 우리만 그렇게 생각하는게 아니기 때문에 이런 좋은 자료들이 만들어지는 것이겠지요.
+In the old kernel version, system calls were implemented simply.
+But the latest version uses macro SYSCALL_DEFINE to define system calls and other optimization techniques.
+So following documents are good references to understand system call implementation.
 * https://lwn.net/Articles/604287/
 * https://lwn.net/Articles/604515/
 
 커널을 분석하다보면 이건 좀 복잡한데, 뭔가 정리된게 없을까하고 생각하면 거의 대부분 좋은 문서들이 있습니다. 그리고 그 문서들의 대부분은 lwn 사이트에 있구요.
+FYI, if you feel something difficult to investigate, there should be good reference for it, because somebody else feels the same.
+And many of good documents are in lwn.org.
 
-여튼 이렇게 좋은 문서가 있으니 이 강좌에서는 코드만 따라가면서 큰 흐름만 보겠습니다. 큰 흐름을 보고나서 이 문서들을 보면 더 잘 이해가 될 것입니다.
+This chapter shows only code flow briefly.
+After reading this chapter, you would be able to understand above document better.
 
-##시스템콜 초기화
-이번 강좌는 인텔프로세서와 어셈블리에 대한 내용이 들어갑니다. 익숙하지않으시면 넘기셔도 좋습니다.
+## system call initialization
 
-###syscall_init
+You need a little knowledge for x86 assembly.
+
+### syscall_init
 
 참고문서 https://lwn.net/Articles/604287/ 에서 설명하듯이 시스템콜을 초기화하는 함수는 syscall_init입니다. 저는 참고문서를 보기전에 int_ret_from_sys_call을 호출하는 함수들을 추적하다가 syscall_init에서 시스템콜을 초기화한다는걸 알았습니다. 코드로 알던 문서로 알던 상관은 없겠지요.
 
