@@ -141,19 +141,22 @@ static void free_cmd(struct nullb_cmd *cmd)
 
 put_tag() is called if one thread finishes IO and free a nullb_cmd object.
 It clears corresponding bit to show there is free nullb_cmd boject.
-Then it check if there is sleeping(waiting) threads for nullb_cmd with waitqueue_active() and wait up threads with wake_up().
+Then it check if there is sleeping(waiting) threads for nullb_cmd with waitqueue_active(), and wakes up threads with wake_up().
 
+Then the sleeping thread called io_schedule() in alloc_cmd() wakes up and calls prepare_to_wait() and `__alloc_cmd()`.
+If it succeeds to allocate the nullb_cmd object, it exits do-while loop and calls finish_wait().
+If not, it sleeps again.
 
-그러면 alloc_cmd의 io_schedule에서 잠든 프로세스는 깨어나고 다시 prepare_to_wait함수와 __alloc_cmd함수를 호출합니다. 이 루프를 nullb_cmd 객체를 찾을 때까지 반복합니다. 사용자 어플은 커널 레벨에서 순간순간 깨어나지만, 사용자 레벨로는 되돌아오지 않습니다. 그리고 nullb_cmd객체를 찾게되면 루프를 빠져나와서 finish_wait을 호출하고 종료합니다.
-
-다시한번 정리하면 필요한 자원을 못찾았을때
+In short, if it fails to allocate the resource
 * prepare_to_wait -> io_schedule (or schedule) -> finish_wait
 
-자원을 해지하고, 자원을 기다리며 잠든 프로세스를 깨울때
+If it frees resource and wakes up sleeping threads
 * waitqueue_active -> wake_up
 
-## 블럭레이어에서 wait-queue 사용
-사실 우리는 wait-queue가 사용되는 코드를 이미 봤었습니다. generic_make_request에서 mybrd 드라이버의 make_request_fn콜백함수를 호출하기전에 blk_queue_enter함수가 있습니다.
+## wait-queue in the block layer
+
+Actually we already saw code using wait-queue().
+generic_make_request() calls blk_queue_enter() before calling make_request_fn callback of mybrd driver.
 
 ```
 blk_qc_t generic_make_request(struct bio *bio)
@@ -172,14 +175,15 @@ blk_qc_t generic_make_request(struct bio *bio)
 			blk_queue_exit(q);
 ......
 ```
-blk_queue_enter함수를 보면 다음과 같이 프로세스를 잠재우는 코드가 있습니다.
+In blk_queue_enter(), there is following code to make thread sleep.
 
 ```
     	ret = wait_event_interruptible(q->mq_freeze_wq,
 				!atomic_read(&q->mq_freeze_depth) ||
 				blk_queue_dying(q));
 ```
-wait_event_interruptible는 매크로함수인데 최종적으로 ___wait_event라는 매크로함수를 호출하게됩니다.
+Following is definition of wait_event_interruptible macro function that calls `__wait_event()`.
+
 ```
 #define wait_event_interruptible(wq, condition)    			\
 ({									\
@@ -228,11 +232,11 @@ wait_event_interruptible는 매크로함수인데 최종적으로 ___wait_event�
 __out:	__ret;								\
 })
 ```
-```___wait_event``` 매크로 함수의 인자는 다음과 같습니다.
-* wq: struct request_queue 구조체의 mq_freeze_wq필드
- * wait_queue_head_t 타입의 객체
+```___wait_event``` has arguments as followings:
+* wq: mq_freeze_wq field of struct request_queue object
+  * wait_queue_head_t object
 * condition: !atomic_read(&q->mq_freeze_depth) || blk_queue_dying(q)
- * mq_freeze_depth는 request-queue를 사용중인 프로세스의 갯수
+  * mq_freeze_depth는 request-queue를 사용중인 프로세스의 갯수
  * blk_queue_dying: request-queue를 제거할때 참이됨
  * request-queue가 사용가능할 때 프로세스를 깨움
 * state: TASK_INTERRUPTIBLE
