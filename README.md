@@ -44,12 +44,9 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 * [page-flags](page-flags.md) - done
 * [system calls and flushing block device](systemcall_flushblock.md) - done
 * [per-cpu variable and statistics (v2.6.11)](per-cpu_statistics.md) - done
-* [wait-queue](wait-queue.md)
-* [ida and request-queue](ida_and_request-queue.md)
+* [wait-queue](wait-queue.md) - done
 * [spinlock](spinlock.md)
-* [read-copy-update](read-copy-update.md)
 * [work-queue](work-queue.md)
-* [TODO](todo.md)
 
 
 # references
