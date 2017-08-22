@@ -182,6 +182,13 @@ In blk_queue_enter(), there is following code to make thread sleep.
 				!atomic_read(&q->mq_freeze_depth) ||
 				blk_queue_dying(q));
 ```
+
+## implementation of wait-queue
+
+Let's read some functions of wait-queue.
+
+### `__wait_event`
+
 Following is a definition of wait_event_interruptible macro function that calls `__wait_event()`.
 
 ```
@@ -280,7 +287,7 @@ It's simple.
 It initializes spinlock and a list for sleeping threads.
 Let me skip lockdep_set_class_and_name() because it's not related to block device driver.
 
-## prepare_to_wait_event
+### prepare_to_wait_event
 
 함수의 인자는
 * wait_queue_head_t *q: wait-queue를 표현하는 구조체
@@ -297,11 +304,11 @@ Let me skip lockdep_set_class_and_name() because it's not related to block devic
 
 wait_queue_head_t 객체에 프로세스를 추가하는게 코드의 전부입니다. 프로세스의 상태가 TASK_RUNNING이 아닌 TASK_INTERRUPTIBLE등의 잠든 상태로 바꿨으니 schedule함수가 호출되면 스케줄러가 알아서 프로세스를 잠재웁니다.
 
-###finish_wait
+### finish_wait
 
 prepare_to_wait_event의 반대로 처리하겠지요. 프로세스의 상태를 TASK_RUNNING으로 바꾸고, wait_queue_head_t 객체의 리스트에서 프로세스를 제거합니다.
 
-###wake_up
+### wake_up
 
 wake_up은 ```__wake_up_common```의 wrapper입니다. __wake_up_common은 wait_queue_head_t 객체의 리스트를 돌면서 wait_queue_t객체의 func 필드에 등록한 함수를 호출합니다. prepare_to_wait_event에서는 autoremove_wake_function 함수를 등록했습니다. autoremove_wake_function은 스케줄러의 try_to_wake_up함수를 호출합니다. 이때부터는 스케줄러의 영역이므로 더는 분석하지 않겠습니다만 wait_queue_t 필드의 private필드에 프로세스의 task_struct 객체가 저장되어있으므로, 스케줄러가 프로세스를 깨울 수 있다는 것만 알면 될것같습니다.
 
