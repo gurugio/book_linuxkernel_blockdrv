@@ -10,7 +10,7 @@ Let's take a look at some kernel code to understand wait-queue implementation.
 reference
 * http://www.makelinux.net/ldd3/chp-6-sect-2
 
-## wait-queue usage of null_blk driver
+## wait-queue of null_blk driver
 
 Following function allocates two resources: struct nullb_cmd and bit map.
 ```
@@ -182,7 +182,7 @@ In blk_queue_enter(), there is following code to make thread sleep.
 				!atomic_read(&q->mq_freeze_depth) ||
 				blk_queue_dying(q));
 ```
-Following is definition of wait_event_interruptible macro function that calls `__wait_event()`.
+Following is a definition of wait_event_interruptible macro function that calls `__wait_event()`.
 
 ```
 #define wait_event_interruptible(wq, condition)    			\
@@ -236,22 +236,25 @@ __out:	__ret;								\
 * wq: mq_freeze_wq field of struct request_queue object
   * wait_queue_head_t object
 * condition: !atomic_read(&q->mq_freeze_depth) || blk_queue_dying(q)
-  * mq_freeze_depth는 request-queue를 사용중인 프로세스의 갯수
- * blk_queue_dying: request-queue를 제거할때 참이됨
- * request-queue가 사용가능할 때 프로세스를 깨움
+  * mq_freeze_depth is the number of threads using the request-queue
+  * blk_queue_dying: true if request-queue is being deleting
+  * if condition is true, thread will be waken
 * state: TASK_INTERRUPTIBLE
- * 프로세스가 잠들때의 상태
+  * thread status when it sleeps
 * exclusive: 0
- * wait-queue의 기본 동작은 자원이 가용해지면 잠들어있는 모든 프로세스를 깨우는 것이지만, exclusive로 셋팅하면 하나의 프로세스만 깨움
+  * if 0, all threads will be waken and compete for the resource
+  * if 1, it will wake up only one thread
 * ret: 0
- * 프로세스가 깨워나면서 반환하는 값
+  * return value
 * cmd: schedule()
- * 프로세스가 잠들때 호출할 함수
- * null_blk은 io_schedule함수를 호출했음
+  * a function called to sleep
+  * null_blk calls io_schedule
 
-```___wait_event```코드는 null_blk드라이버에서 이미 본 코드입니다. prepare_to_wait을 호출하고 잠들어야할지 말아야할지 확인한다음 조건에 맞지 않으면 잠들기를 반복하는 것입니다.
+`___wait_event()` code is the same to null_blk driver.
+It calls prepare_to_wait() and repeats to check if it needs to sleep.
 
-request-queue에 mq_freeze_wq 필드는 언제 초기화된걸까요? mq_freeze_wq필드의 초기화도 이미 우리가 알아본 코드에 있습니다. blk_alloc_queue_node는 mybrd에서 request-queue를 초기화할 때 호출한 함수입니다. mq_freeze_wq필드도 당연히 request-queue가 초기화될때 같이 초기화되었을겁니다. blk_alloc_queue_node를 볼까요.
+When is the mq_freeze_wq field of the request-queue initialized?
+blk_alloc_queue_node(), we used to initialize the request-queue in mybrd driver, initializes mq_free_wq field when it initializes the request-queue.
 
 ```
 struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
@@ -261,7 +264,9 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
     ......
     init_waitqueue_head(&q->mq_freeze_wq);
 ```
-init_waitqueue_head가 호출되는걸 확인할 수 있습니다. init_wait_queue_head는 __init_waitqueue_head의 wrapper입니다.
+
+init_waitqueue_head() is a wrapper of `__init_waitqueue_head()`.
+
 ```
 void __init_waitqueue_head(wait_queue_head_t *q, const char *name, struct lock_class_key *key)
 {
@@ -270,14 +275,12 @@ void __init_waitqueue_head(wait_queue_head_t *q, const char *name, struct lock_c
 	INIT_LIST_HEAD(&q->task_list);
 }
 ```
-구현은 간단합니다. 스핀락을 초기화하고 대기할 프로세스의 리스트를 초기화합니다. lockdep_set_calss_and_name은 블럭장치와 거리가 머니까 생략하겠습니다.
 
-그럼 마지막으로 잠든 프로세스를 깨우는 코드를 찾으면 되겠네요. wake_up등의 함수에서 mq_freeze_wq를 인자로 받는 코드를 추적하면 됩니다. blk_mq_wake_waiters라는 함수와 blk_mq_unfreeze_queue라는 함수 등에서 wake_up_all을 호출합니다.
+It's simple.
+It initializes spinlock and a list for sleeping threads.
+Let me skip lockdep_set_class_and_name() because it's not related to block device driver.
 
-## wait-queue의 내부 구현
-null_blk드라이버도 그렇고 블럭레이어에서도 마찬가지로 prepare_to_wait_event와 schedule, finish_wait함수가 프로세스를 잠들게하는 코드입니다. 그리고 wake_up함수가 프로세스를 깨웁니다. schedule은 간단하게 분석할 수 없으니 제외하고 나머지 함수들만 간단하게 읽어보겠습니다.
-
-###prepare_to_wait_event
+## prepare_to_wait_event
 
 함수의 인자는
 * wait_queue_head_t *q: wait-queue를 표현하는 구조체
