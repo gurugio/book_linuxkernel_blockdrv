@@ -1,31 +1,18 @@
-# 드라이버의 자원을 기다리게하는 wait-queue
+# wait-queue: waiting for resource
 
-C로 어느정도 실무를 하다보면 블럭 장치나 네트워크 장치를 읽고 쓰는 프로세스는 언제든지 잠들 수 있다는걸 알게됩니다. 그래서 조금만 복잡한 소프트웨어가되도 쓰레드를 나눠서 동기 IO로할지, 같은 쓰레드내에서 비동기 IO로 할지 결정해야합니다. 블럭 장치의 경우는 epoll등을 이용해서 비동기 IO로 처리하는 경우가 많은것 같습니다. 네트워크 통신의 경우는 동접이 많아질 경우 비동기 IO라고해도 잠들어있는 쓰레드 갯수가 많아질 수 있으므로 자원낭비가 됩니다. 그래서 아예 연결을 끊어버리고 동기 IO로 구현하는 방법도 있습니다.
+There is a nr_requests field in struct request_queue that is the maximum number of requests the queue can has.
+If more requests are generated than nr_requests, kernel makes the thread sleep for a while.
+That is when wait-queue is used.
 
-어쨌든 블럭 장치는 IO 요청이 많아지고, request-queue가 처리할 수 있는 한도 이상으로 IO 요청이 많아지면 wait-queue라는걸 이용해서 프로세스를 잠들게만듭니다. 어디에서 어떻게 프로세스가 잠들지를 판단하고 어떻게 프로세스를 잠들게하는지, 또 언제 어떻게 깨어날 수 있는지를 알아보겠습니다.
+The wait-queue is a kind of queue that has sleeping threads waiting for resource released.
+Let's take a look at some kernel code to understand wait-queue implementation.
 
-제 글들이 다 그렇듯이 그다지 깊게 들어가지않고 전체적인 디자인만 보겠습니다. 더 자세하고 정확한 내용은 다른 참고자료들을 활용하시기 바랍니다.
+reference
+* http://www.makelinux.net/ldd3/chp-6-sect-2
 
-참고자료
+## wait-queue usage of null_blk driver
 
-http://www.makelinux.net/ldd3/chp-6-sect-2
-
-##null_blk 드라이버에서 wait-queue 사용 예제
-wait-queue 사용법은 간단한 것이니까 내부부터 설명하기보다는 예제를 보면서 생각해보는게 좋을것 같습니다.
-
-mybrd를 만들때 소개한대로 mybrd에서 참고한 드라이버 소스가 있습니다. 램디스크 드라이버 brd와 null_blk라는 커널의 블럭 레이어 테스트 드라이버입니다. 이 두 드라이버를 합쳐서 램디스크가 멀티큐를 처리할 수 있도록 만든게 mybrd 드라이버입니다. 사실 램디스크가 멀티큐를 지원할 필요는 없지만 멀티큐의 구현을 알아보려는 생각으로 시도해본 것이지요.
-
-그래서 null_blk.c 파일을 보면 mybrd 코드와 거의 동일합니다. 그런데 한가지만 다른게 있습니다. null_blk 드라이버는 struct nullb_cmd라는 구조체를 만들어서 bio-mode일때와 request-queue-mode일때 모두 동일하게 IO를 처리합니다.
-
-null_queue_bio함수는 mybrd의 mybrd_make_request_fn 함수와 같은 일을 하는 함수입니다. bio-mode일때 bio를 처리하는 함수입니다. null_add_dev에서 blk_queue_make_request함수의 인자로 전달됩니다. mybrd에서 mybrd_make_request_fn 함수도 마찬가지로 blk_queue_make_request함수의 인자로 전달되서 bio를 처리할 때 호출되었습니다.
-
-null_rq_prep_fn함수는 mybrd_request_fn에 해당하는 함수입니다. blk_queue_prep_rq 함수가 호출될때 인자로 전달되서 request를 처리할 때 호출됩니다.
-
-null_blk 드라이버 소스에서는 null_queue_bio와 null_rq_prep_fn함수에서 alloc_cmd함수를 통해 nullb_cmd 객체를 만듭니다. 그리고 bio-mode일때는 nullb_cmd의 bio필드에 bio 포인터를 복사하고, request-mode일때는 rq필드에 request의 포인터를 복사합니다. 그래서 하위 처리 함수에서는 nullb_cmd의 객체만 전달받아서 처리하는 것이지요.
-
-null_blk 드라이버의 구현과 별도로 제가 말씀드리고싶은 것은 바로 alloc_cmd에서 nullb_cmd 객체를 사용할때 바로 wait-queue를 사용한다는 것입니다.
-
-가장 먼저 봐야할 코드는 nullb_queue 객체의 cmds 필드와 tag_map 필드입니다.
+Following function allocates two resources: struct nullb_cmd and bit map.
 ```
 static int setup_commands(struct nullb_queue *nq)
 {
@@ -53,7 +40,11 @@ static int setup_commands(struct nullb_queue *nq)
 	return 0;
 }
 ```
-cmds필드에는 nullb_cmd 객체를 미리 request-queue의 depth만큼 할당해놓습니다. 그리고 tag_map필드에 비트맵을 만듭니다. 이 비트맵은 각 비트가 하나의 nullb_cmd 객체의 사용중인지 가용한지 상태를 보여주는 것입니다. 비트의 값이 0이면 가용한 것이고, 1이면 이미 사용중인 것입니다.
+
+cmds filed is and array of struct nullb_cmd.
+And tag_map field is a bit map that represent status of nullb_cmd object.
+If a bit in tag_map is 1, corresponding tag_map is busy.
+
 
 ```
 static unsigned int get_tag(struct nullb_queue *nq)
@@ -90,9 +81,8 @@ static struct nullb_cmd *__alloc_cmd(struct nullb_queue *nq)
 	return NULL;
 }
 ```
-get_tag함수는 find_first_zero_bit함수를 이용해서 비트맵에서 0인 비트를 찾은 후, test_and_set_bit_lock함수를 이용해서 해당 비트를 1로 바꿉니다. test_and_set 계열의 함수들이 다 그렇듯이 값을 바꾸기 이전 값을 반환합니다. 만약 1을 반환하면 값을 1로 바꾸기 전에 다른 쓰레드에서 1로 바꾼 것이므로, 다시 0인 비트를 찾습니다.
 
-__alloc_cmd에서는 만약 가용한 nullb_cmd를 찾지못할경우 NULL을 반환합니다.
+`__alloc_amd` returns NULL if there is no free nullb_cmd object.
 
 ```
 static struct nullb_cmd *alloc_cmd(struct nullb_queue *nq, int can_wait)
@@ -117,11 +107,23 @@ static struct nullb_cmd *alloc_cmd(struct nullb_queue *nq, int can_wait)
 	return cmd;
 }
 ```
-alloc_cmd 함수는 __alloc_cmd를 호출해서 nullb_cmd 객체를 찾습니다. 이상없이 객체를 찾으면 당연히 IO처리를 계속하면 됩니다만 만약 가용한 nullb_cmd객체가 없다면 어떻게 해야할지를 alloc_cmd에서 결정하는 것입니다.
 
-가용한 nullb_cmd 객체가 없다면 가장 먼저 prepare_to_wait을 호출합니다. 함수 인자나 내부 구현등은 나중에 prepare_to_wait의 코드를 볼때 생각하기로하고, 일단 지금은 어떻게 사용하는지만 생각해보겠습니다. 이름만봐도 지금은 나중에 잠들경우를 준비한다는걸 알 수 있습니다. 그리고 __alloc_cmd를 다시한번 호출해봅니다. 만약 또다시 실패한다면 이젠 정말 잠들어야합니다. 그래서 결국 io_schedule함수를 호출해서 프로세스를 강제로 잠재웁니다.
+alloc_cmd() calls `__alloc_cmd()` to find valid nullb_cmd object.
+If there is no valid nullb_cmd object, it should wait unitl current IOs will be finishes and free nullb_cmd object.
 
-잠든 프로세스가 언제 깨어날까요. 그건 찾기를 실패한 자원이 다시 가용해질때겠지요. 그러므로 nullb_cmd 객체를 반환하는 함수를 찾아야합니다. alloc_cmd가 있으니 free_cmd가 있겠지요. 그리고 free_cmd에서는 put_tag를 호출합니다.
+First it calls prepare_to_wait() to initialize wait field of nullb_queue object.
+Next it tries to find valid nullb_cmd object.
+If it fails again, there is no choice.
+It calls io_schedule() to run other threads.
+
+If io_schedule() returns, it means another threads wakes up sleeping thread.
+So it tried to find valid nullb_cmd again.
+Of course, another thread can occupy nullb_cmd already.
+So that do-while loop has current thread wait until it really occupies a nullb_cmd object.
+Then it finalizes wait data.
+
+put_tag() function shows how another thread can wake up sleeping threads.
+
 ```
 static void put_tag(struct nullb_queue *nq, unsigned int tag)
 {
@@ -136,7 +138,11 @@ static void free_cmd(struct nullb_cmd *cmd)
     put_tag(cmd->nq, cmd->tag);
 }
 ```
-put_tag는 waitqueue_active를 호출해서 현재 wait-queue에서 잠든 프로세스가 있는지 확인하고 wake_up함수로 프로세스를 깨웁니다.
+
+put_tag() is called if one thread finishes IO and free a nullb_cmd object.
+It clears corresponding bit to show there is free nullb_cmd boject.
+Then it check if there is sleeping(waiting) threads for nullb_cmd with waitqueue_active() and wait up threads with wake_up().
+
 
 그러면 alloc_cmd의 io_schedule에서 잠든 프로세스는 깨어나고 다시 prepare_to_wait함수와 __alloc_cmd함수를 호출합니다. 이 루프를 nullb_cmd 객체를 찾을 때까지 반복합니다. 사용자 어플은 커널 레벨에서 순간순간 깨어나지만, 사용자 레벨로는 되돌아오지 않습니다. 그리고 nullb_cmd객체를 찾게되면 루프를 빠져나와서 finish_wait을 호출하고 종료합니다.
 
