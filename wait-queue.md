@@ -289,27 +289,32 @@ Let me skip lockdep_set_class_and_name() because it's not related to block devic
 
 ### prepare_to_wait_event
 
-함수의 인자는
-* wait_queue_head_t *q: wait-queue를 표현하는 구조체
-* wait_queue_t *wait: 현재 잠들 프로세스를 표현하는 구조체
-* int state: 잠들때 어떤 상태로 잠들 것인지
+Function parameters are
+* wait_queue_head_t *q: data struct to represent wait-queue
+* wait_queue_t *wait: data struct to represent thread to be slept
+* int state: thread status after sleep
 
-코드를 보면 다음과 같은 순서로 처리합니다.
-* wait->private = current 현재 프로세스의 task_struct 객체를 저장
-* wait->func = autoremove_wake_function 나중에 프로세스가 깨어날때 호출된 함수
-* wait_queue_head_t 객체의 스핀락 잡기
-* __add_wait_queue(q, wait): list_add함수와 동일합니다. wait_queue_t 객체의 task_list 노드를 wait_queue_head_t 객체의 리스트에 추가하는 것입니다.
-* set_current_state: 프로세스의 상태 수정
-* 스핀락 해지
+What it does:
+* wait->private = current: stores task_struct object of the current thread
+* wait->func = autoremove_wake_function: set a function called when sleeping thread wakes up
+* lock wait_queue_head_t object
+* `__add_wait_queue(q, wait)`: same to list_add(). add task_list node of wait_queue_t object to the list of wait_queue_head_t object.
+* set_current_state: change task status
+* unlock wait_queue_head_t object
 
-wait_queue_head_t 객체에 프로세스를 추가하는게 코드의 전부입니다. 프로세스의 상태가 TASK_RUNNING이 아닌 TASK_INTERRUPTIBLE등의 잠든 상태로 바꿨으니 schedule함수가 호출되면 스케줄러가 알아서 프로세스를 잠재웁니다.
+All it does is adding thread into wait_queue_head_t object and change thread status from TASK_RUNNING to TASK_INTERRUPTIBLE.
+So scheduler() will make thread sleep later because its status is not TASK_RUNNING.
 
 ### finish_wait
 
-prepare_to_wait_event의 반대로 처리하겠지요. 프로세스의 상태를 TASK_RUNNING으로 바꾸고, wait_queue_head_t 객체의 리스트에서 프로세스를 제거합니다.
+Contrary to prepare_to_wait_event(), it set thread status to TASK_RUNNING and extract the thread from the list of wait_queue_head_t object.
 
 ### wake_up
 
-wake_up은 ```__wake_up_common```의 wrapper입니다. __wake_up_common은 wait_queue_head_t 객체의 리스트를 돌면서 wait_queue_t객체의 func 필드에 등록한 함수를 호출합니다. prepare_to_wait_event에서는 autoremove_wake_function 함수를 등록했습니다. autoremove_wake_function은 스케줄러의 try_to_wake_up함수를 호출합니다. 이때부터는 스케줄러의 영역이므로 더는 분석하지 않겠습니다만 wait_queue_t 필드의 private필드에 프로세스의 task_struct 객체가 저장되어있으므로, 스케줄러가 프로세스를 깨울 수 있다는 것만 알면 될것같습니다.
-
-결국 전체적인 디자인을 보면 리스트를 만들어서 잠든 프로세스의 task_struct 객체를 보관하고, 자원을 해지하는 함수가 리스트를 돌면서 리스트에 있는 task_struct 객체를 스케줄러에게 깨워달라고 의뢰하는 방식입니다.
+wake_up() is wrapper of `__wake_up_common()`.
+`__wake_up_common()` calls func callback of all wait_queue_t objects in wait_queue_head_t list.
+prepare_to_wait_event() registers autoremove_wake_function() as callback of wait_queue_t object.
+autoremove_wake_function() calls try_to_wake_up() function of scheduler.
+Then scheduler wakes up all threads in the wait-queue and each thread checks valid resource.
+Some threads will be able to occupy resource and go ahead.
+But some will fail to occupy resource and sleep until other threads wakes them up.
