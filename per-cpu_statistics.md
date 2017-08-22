@@ -17,9 +17,7 @@ I think if you understand per-cpu implementation of v2.6, you could look into th
 reference
 * http://www.makelinux.net/ldd3/chp-8-sect-5
 
-## static definition of per-cpu variable
-
-### DEFINE_PER_CPU and per-cpu section
+## static definition of per-cpu variable with DEFINE_PER_CPU macro
 
 Let's start with where per-cpu is stored.
 DEFINE_PER_CPU(type, name) macro creates a per-cpu variable with the specified type and name.
@@ -143,17 +141,11 @@ And we can find a section for per-cpu variables, so called as .data.percpu.
 127   __per_cpu_end = .;
 128   . = ALIGN(4096);
 ```
-lds파일은 링커에게 어떤 섹션을 어떻게 만들지 등을 알려주는 파일입니다. 그리고 .data.percpu 섹션 이름 위아래에 __per_cpu_start와 __per_cpu_end가 있는데 각각 섹션의 시작 위치와 끝 위치를 저장한 변수입니다. 나중에 커널 코드에서 변수처럼 사용할 것입니다.
 
 Linker reads vmlinux.lds file and makes .data.percpu section.
 `__per_cpu_start` and `__per_cpu_end` defines the start and end address of the section.
 
 Finally we understand that DEFINE_PER_CPU macro stores variable in .data.percpu section.
-
-
-그건 setup_per_cpu_areas() 함수를 보면 알 수 있습니다.
-
-.data.percpu섹션의 크기는 위에 링커 스크립트에서 본대로 ```__per_cpu_end - __per_cpu_start``` 값이 됩니다. alloc_bootmem 함수로 섹션 크기만큼 메모리를 할당하고 .data.percpu 섹션을 복사합니다. cpu_pda[].data_offset에는 .data.percpu 섹션과 새로 할당된 메모리의 offset을 저장하는데, 나중에 cpu 번호를 알면 cpu_pda[cpu번호].data_offset 값과 변수의 포인터를 가지고 per-cpu 변수의 위치를 계산하게 됩니다.
 
 Then let's check setup_per_cpu_ares() function that initializes per-cpu variables in .data.percpu section.
 It checks the size of .data.percpu section with `__per_cpu_end - __per_cpu_start`.
@@ -180,20 +172,11 @@ If foo variables is stored at offset 0x10 in .data.percpu, foo of cpu0 is 0x1010
 
 ## how to use per-cpu variable
 
-per-cpu 변수를 만들었으니 어떻게 쓰는지를 봐야겠지요.
+Let's see how we can use per-cpu variable.
+The most common way is using per_cpu macro that uses RELOC_HIDE macro that calculate the address of the variable with cpu_pda[cpu].data_offset.
 
-가장 대표적인게 per_cpu매크로를 이용하는 방법입니다. per_cpu는 사실 DEFINE_PER_CPU 매크로에서 설명할 때 설명했던것 같이 원래 .data.percpu섹션에 있던 변수의 주소에 cpu_pda[cpu].data_offset을 더하는 작업을 매크로로 만든것 뿐입니다. 그런 주소값을 더하는 작업을 RELOC_HIDE라는 매크로로 처리합니다.
-
-RELOC_HIDE 매크로의 정의를 보면 컴파일러마다 다르게 만들어놨는데요 주석을 읽어보면 gcc가 최초 .data.percpu 섹션에 정의된 변수의 주소에 이상한 값을 더하려한다는걸 알고 뭔가 최적화를 하거나 나름대로 뭔가를 더 하려고할 수 있는데, 그걸 방지하는게 목적이라고 써있습니다. gcc는 foo라는 변수가 0x1010 위치에 8바이트 크기로 저장된걸 알고있는데 갑자기 &foo + 0x1000 이라는 연산을 한다면 똑똑한 gcc는 에러라고 생각할 수 있다는 것입니다.
-
-
-어쨌든 gcc가 아닌 intel 컴파일러용 코드 include/linux/compiler-intel.h를 보면 주소를 더할 뿐이라는걸 알 수 있습니다.
-
-
-그럼 per_cpu 매크로를 사용하는 예제 코드를 보겠습니다.
-
-v2.6.11 코드를 기준으로 recalc_bh_state라는 함수가 있습니다.
-
+Let's take a look at real code.
+Following is recalc_bh_state() function in v2.6.11.
 ```
 struct bh_accounting {
     int nr;			/* Number of live bh's */
@@ -216,14 +199,19 @@ static void recalc_bh_state(void)
 }
 ```
 
-struct bh_accouting이라는 데이터구조는 버퍼헤드의 갯수 nr 정보를 가지고 있습니다. 만약 커널 전역 변수로 struct bh_accouting타입의 객체를 만들어놨으면 버퍼해드를 만들때마다 각 프로세서가 캐시를 날리고 메모리를 읽고 다른 프로세서의 캐시도 날리고 등의 작업을 할 것입니다.
+struct bh_accounting has the number of buffer heads in nr field.
+If a object of struct bh_accounting is global variable, all threads on all CPUs accesses that object.
+It corrupts caches of all CPUs and generates so many cache coherent communication.
 
-그래서 커널에서는 DEFINE_PER_CPU로 bh_accouting 객체를 정적으로 만들어놨습니다. 그리고 recalc_bh_state 함수에서 각 cpu마다 bh_accounting 변수를 참조해서 총 갯수를 계산합니다. per_cpu 매크로의 결과가 포인터가 아니라는 것에 주의해야합니다.
+So kernel defines bh_accounting object with DEFINE_PER_CPU.
+recalc_bh_state() function sums up bh_accounting values of all CPUs.
 
+## dynamically define per-cpu variable
 
-##per-cpu 변수 동적으로 만들기
+per-cpu variable can be defined dynamically with alloc_percpu().
+It creates a object of struct percpu_data and allocates memory as much as CPUs for ptrs[NR_CPUs] array.
+percpu_data is a global object of kernel and manages per-cpu data.
 
-alloc_percpu을 이용해서 per-cpu변수를 동적으로 만들 수 있습니다. alloc_percpu함수 먼저 struct percpu_data 구조체의 객체를 만듭니다. struct percpu_data에는 void *ptrs[NR_CPUS] 배열이 있는데 프로세서 갯수만큼 요청받은 크기의 메모리를 할당합니다. percpu_data 객체는 시스템에 전역적인 객체이고, 이 객체가 각 프로세서별 데이터를 관리하는 것입니다. 그리고 percpu_data 객체를 반환합니다.
 ```
 void *__alloc_percpu(size_t size, size_t align)
 {
@@ -248,11 +236,15 @@ void *__alloc_percpu(size_t size, size_t align)
 	/* Catch derefs w/o wrappers */
 	return (void *) (~(unsigned long) pdata);
 ```
-그런데 마지막 반환값을 보면 pdata변수를 그대로 반환하는게 아니라 ~ 연산자를 써서 비트를 반전시켜서 반환합니다. 왜냐면 주석에도 설명했듯이 per-cpu 변수를 일반 변수 쓰듯이 접근하면 안되기때문에 비트를 반전시켜서 접근이 안되도록 한 것입니다.
 
-per-cpu변수를 해지하는 함수는 free_percpu입니다. 해지할 객체의 ptrs 배열에 있는 각 프로세서별 메모리를 해지하고, 마지막으로 객체 자체를 해지합니다. free_percpu 코드의 시작 부분에는 전달된 per-cpu변수의 비트를 반전시킵니다. 그래야 원래의 per-cpu 변수에 접근할 수 있기 때문입니다.
+Please notice that it returns the negative value of the address of percpu_data object.
+per-cpu variables should not be accessed directly, but via macro functions for per-cpu variable.
+Accessing the return value directly will be generated error.
 
-alloc_percpu함수로 할당받은 per-cpu변수에서 프로세서별 변수에 접근하기 위해서per_cpu_ptr 매크로함수를 사용합니다. 
+free_percpu() function frees per-cpu variable.
+It frees per-CPU memory and then frees percpu_data object.
+
+We should use per_cpu_ptr macro to access the per-cpu variable allocated by alloc_percpu().
 ```
 /* 
  * Use this to get to a cpu's version of the per-cpu object allocated using
@@ -265,9 +257,10 @@ alloc_percpu함수로 할당받은 per-cpu변수에서 프로세서별 변수에
         (__typeof__(ptr))__p->ptrs[(cpu)];    \
 })
 ```
-alloc_percpu함수로 받은 값의 비트를 반전시키면 percpu_data 객체를 얻을 수 있습니다. 그리고 percpu_data 객체의 ptrs[cpu] 값이 해당 프로세서용 변수의 포인터입니다.
 
-이제 실제로 어떻게 사용하는지 예를 한번 보겠습니다. 다음은 include/linux/genhd.h 파일에 정의된 init_disk_stats 함수입니다.
+As you can see, it just returns the address in the array of ptrs[].
+
+Following is an example to create dynamic per-cpu variable.
 ```
 static inline int init_disk_stats(struct gendisk *disk)
 {
@@ -282,11 +275,15 @@ static inline void free_disk_stats(struct gendisk *disk)
 }
 ```
 
-gendisk의 dkstats 필드에 disk_stats 타입의 per-cpu 변수를 생성합니다. 그리고 free_disk_stats함수에서 disk->dkstats 변수를 해지합니다. 다음은 per_cpu_ptr 함수의 예제입니다.
+struct gendisk has statistics information at dkstats field that is allocated via alloc_percpu().
+And it is freed via free_percpu().
 
+And following is an example to update the per-cpu value.
 ```
 #define __disk_stat_add(gendiskp, field, addnd)     \
 	(per_cpu_ptr(gendiskp->dkstats, smp_processor_id())->field += addnd)
 ```
-참고로 smp_processor_id()는 이 코드가 실행된 프로세서의 번호를 반환해줍니다. 그리고 per_cpu_ptr함수의 결과값은 lvalue입니다. 따라서 함수의 결과값에 곧바로 ->같은 연산자를 적용할 수 있습니다.
+
+smp_processor_id() returns the CPU number.
+per_cpu_ptr() returns lvalue, so we can use -> operator to the per_cpu_ptr() macro.
 
