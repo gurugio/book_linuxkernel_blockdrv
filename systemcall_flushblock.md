@@ -9,7 +9,6 @@ So following documents are good references to understand system call implementat
 * https://lwn.net/Articles/604287/
 * https://lwn.net/Articles/604515/
 
-커널을 분석하다보면 이건 좀 복잡한데, 뭔가 정리된게 없을까하고 생각하면 거의 대부분 좋은 문서들이 있습니다. 그리고 그 문서들의 대부분은 lwn 사이트에 있구요.
 FYI, if you feel something difficult to investigate, there should be good reference for it, because somebody else feels the same.
 And many of good documents are in lwn.org.
 
@@ -22,9 +21,17 @@ You need a little knowledge for x86 assembly.
 
 ### syscall_init
 
-참고문서 https://lwn.net/Articles/604287/ 에서 설명하듯이 시스템콜을 초기화하는 함수는 syscall_init입니다. 저는 참고문서를 보기전에 int_ret_from_sys_call을 호출하는 함수들을 추적하다가 syscall_init에서 시스템콜을 초기화한다는걸 알았습니다. 코드로 알던 문서로 알던 상관은 없겠지요.
+As you can see in https://lwn.net/Articles/604287/, system calls are initialized by syscall_init().
 
-wrmsrl이라는 함수가 나오는데 결국 wrmsr 이라는 어셈블리 명령을 실행하는 함수입니다.
+```
+void syscall_init(void)
+{
+	wrmsr(MSR_STAR, 0, (__USER32_CS << 16) | __KERNEL_CS);
+	wrmsrl(MSR_LSTAR, (unsigned long)entry_SYSCALL_64);
+... skip ...
+```
+
+Entry point of all system calls is initialized with wrmsrl() function that is wrapper of wrmsr assembly instruction.
 
 ```
 static inline void native_write_msr(unsigned int msr,
@@ -33,13 +40,14 @@ static inline void native_write_msr(unsigned int msr,
 	asm volatile("wrmsr" : : "c" (msr), "a"(low), "d" (high) : "memory");
 }
 ```
-wrmsr이 뭔지는 인텔프로세서 메뉴얼을 참고하셔도 좋고 구글로 검색해서 http://x86.renejeschke.de/html/file_module_x86_id_326.html 같은 사이트를 찾아봐도 좋습니다. 어쨌든 wrmsr 명령은 유저레벨 어플이 시스템콜을 호출했을 때 프로세서가 알아서 점프해야할 주소를 프로세서의 특수 레지스터에 저장하는 명령입니다. ecx레지스터에는 특수 레지스터의 주소를 저장하고, edx:eax 레지스터에 64비트의 주소값을 32비트씩 나눠서 저장하면 됩니다. 이런 어셈블리 명령 호출을 C 함수로 wrapper를 만든게 바로 wrmsrl입니다.
 
-유저어플에서 어떤 어셈블리 명령을 쓰는지는 상관할 필요가 없고, 어쨌든 미리 정해진 규칙에 따라 시스템콜을 호출한다는 것만 생각하면 됩니다. 그럼 프로세서는 알아서 wrmsrl 함수로 전달된 entry_SYSCALL_64 주소로 점프합니다.
+You can check http://x86.renejeschke.de/html/file_module_x86_id_326.html or Intel Processor Manuals to find what wrmsr does.
+In short, it stores an address, entry_SYSCALL_64, in a special register MSR_LSTAR.
+Now when application calls system call, processor automatically jumps to entry_SYSCALL_64 address.
 
-###entry_SYSCALL_64
+### entry_SYSCALL_64
 
-그럼 entry_SYSCALL_64는 뭘까요? 함수인지 뭔지 grep으로 찾아보겠습니다. 
+Let's find entry_SYSCALL_64 with grep tool.
 ```
 $ grep entry_SYSCALL_64 * -IR
 arch/x86/entry/entry_64.S:ENTRY(entry_SYSCALL_64)
@@ -58,13 +66,34 @@ arch/x86/include/asm/proto.h에 함수로 선언을 해놨네요. 그리고 arch
 
 시스템콜 자체를 보려는게 아니라 int_ret_from_sys_call이 어디서 언제 호출되는지를 알려는게 목적이니까 entry_SYSCALL_64 자체를 분석할 필요는 없습니다. 중요한건 시스템콜이 호출되면 entry_SYSCALL_64가 호출된다는 것입니다. 그리고 entry_SYSCALL_64에서 sys_call_table을 이용해서 시스템콜을 호출하고, 마지막으로 int_ret_from_sys_call을 호출한다는 것입니다.
 
-결론은 int_ret_from_sys_call은 시스템콜이 끝날때 호출되므로 시스템콜이 끝날때 블럭장치의 페이지캐시가 flush된다는 것입니다.
+We can find entry_SYSCALL_64 in arch/x86/entry/entry_64.S file.
+ENTRY and END macros defines starting point and end point of macro function in assembly file.
 
-참고로 sys_call_table은 함수 포인터의 배열인데 C 코드에서 정의하고있지 않습니다. arch/x86/entry/syscall_64.c파일에 보면 sys_call_table 배열이 정의되어있는데, 그 값들이 하드코딩된게 아니라  #include <asm/syscalls_64.h> 만 써있습니다. syscalls_64.h 파일을 찾아보면 arch/x86/include/generated/asm/syscalls_64.h에 보일수도 있고 안보일 수도 있습니다. 결론적으로는 커널이 빌드될 때 arch/x86/entry/syscalls/Makefile 파일이 실행되고, syscalltbl.sh 스크립트를 이용해서 syscall_64.tbl 파일을 읽고, syscalls_64.h 파일을 생성합니다. 시스템콜이 언제든 추가될 수 있으니 이렇게 동적으로 테이블을 만들도록 구현한 것입니다.
+We don't need to look into every instruction.
+Core part is calling `*sys_call_table(, %rax, 8)`.
+sys_call_table is an array of addresses of system calls, and rax has system call number and 8 is size of one entry of the table.
+The entry point of all system calls are the same but `call	*sys_call_table(, %rax, 8)` instruction jumps to corresponding system call.
 
-## 그럼 어떤 시스템콜이 블럭 장치를 flush할까?
+Where is sys_call_table?
+It's a little bit difficult to find the definition of sys_call_table because it's not code in source file.
+After building kernel, arch/x86/include/generated/asm/syscalls_64.h is generated automatically by arch/x86/entry_syscalls/Makefile that executes syscalltbl.sh script with syscall_64_tbl.
 
-시스템콜이 끝날때 블럭 장치의 flush가 발생했다는건 알았으니 콜스택을 한번 따라가보겠습니다. 
+## System call to flush IO
+
+Do you remember that callstack of writing data to disk starts with int_ret_from_sys_call?
+```
+/*
+ * Syscall return path ending with IRET.
+ * Has correct iret frame.
+ */
+GLOBAL(int_ret_from_sys_call)
+```
+
+It is the end point of all system calls.
+So we can understand that flushing writing IO is done at the end of system call.
+
+Let's check again the callstack of writing disk.
+
 ```
 WRITE: int_ret_from_sys_call
 --> syscall_return_slowpath
@@ -72,6 +101,7 @@ WRITE: int_ret_from_sys_call
 --> task_work_run
 --> __fput
 ```
+
 exit_to_usermode_loop에서 곧바로 task_work_run을 호출하는게 아니라 do_signal -> get_signal -> task_work_run 순서로 호출됩니다.
 
 task_work_run은 무한 루프를 돌면서 struct task_struct 구조체의 task_works 리스트에 저장된 callback_head 들을 찾아내서 콜백함수를 실행합니다. 우리는 어떤 콜백함수가 호출되었는지 미리 알고있습니다. ```____fput```이지요. 그러니 어디에서 task_work_add 함수를 호출해서 ```____fput```을 task_works 리스트에 추가하는지만 찾으면 됩니다.
