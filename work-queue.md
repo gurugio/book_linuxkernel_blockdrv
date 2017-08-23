@@ -313,9 +313,11 @@ We checked how block layer uses the work-queue, let's check the implementation.
 
 ### struct work_struct
 
-이전에 struct blk_mq_hw_ctx 구조체에서 run_work 필드가 work-queue에 추가되는 코드를 봤습니다. run_work필드는 struct delayed_work 구조체이고, struct delayed_work는 struct work_struct구조체에 타이머를 더해서 만들어진 것입니다.
+We have seen some code for adding run_work field of struct blk_mq_hw_ctx into the work-queue kblockd_workqueue.
+The run_work field is an object of struct delayed_work.
+struct delayed_work consists of struct work_struct and timer.
 
-가장 핵심이 되는 struct work_struct 구조체와 struct work_struct 타입의 객체를 초기화하는 ```__INIT_WORK```매크로를 보겠습니다.
+We look into struct work_struct and `__INIT_WORK` macro to initialize struct work_struct.
 
 ```
 struct work_struct {
@@ -332,18 +334,18 @@ struct work_struct {
 		(_work)->func = (_func);				\
 	} while (0)
 ```
-아주 간단합니다. work-queue의 리스트 헤드에 추가될 리스트 노드와 실행할 함수로 이루어져있습니다.
-* entry: work-queue내부의 리스트에 연결될 리스트 노드
-* func: work-queue에서 해당 작업이 선택되면 func에 저장된 함수
 
-###queue_work
+They are simple.
+struct work_struct consists of a list-node entry and function pointer func.
+And `__init_WORK` just adds the list-node into the list.
 
-work-queue에 새로운 작업을 추가하는 함수입니다. 함수인자를 보면
-* wq: work-queue를 표현하는 struct workququq_struct 객체의 포인터
-* work: work-queue에 추가될 작업을 표현하는 struct work_struct 객체의 포인터
+### queue_work
 
-결국 work-queue에 work를 추가하는 것 뿐입니다.
-다음과 같이 함수 코드를 보면 최종적으로 ```__queue_work```라는 함수를 호출합니다.
+queue_work() adds new work into the work-queue with following parameters:
+* wq: pointer to work-queue
+* work: pointer to work
+
+queue_work() is a wrapper of `__queue_work()`.
 
 ```
 static inline bool queue_work(struct workqueue_struct *wq,
@@ -381,20 +383,18 @@ bool queue_work_on(int cpu, struct workqueue_struct *wq,
 }
 EXPORT_SYMBOL(queue_work_on);
 ```
-여기에서 locak_irq_save를 호출한 것을 보면 작업을 관리할 때 CPU별로 따로 관리한다는걸 알 수 있습니다. 즉 0번 CPU에서 queue_work함수가 호출되었으면 이때 추가된 작업은 추후에 0번 CPU에서 실행될 가능성이 높다는 것입니다.
 
-```__queue_work```함수인자는 다음과 같습니다.
-* int cpu: work가 실행될 cpu 번호
-* wq: work가 추가될 work-queue
-* work: struct work_struct 객체 포인터
+Let's check some code of `__queue_work()`.
 
-함수 코드를 읽어보겠습니다.
 ```
+static void __queue_work(int cpu, struct workqueue_struct *wq,
+			 struct work_struct *work)
+... skip...
 retry:
 	if (req_cpu == WORK_CPU_UNBOUND)
 		cpu = raw_smp_processor_id();
 ```
-가장 먼저 현재 실행되고 있는 CPU가 뭔지를 알아냅니다.
+It gets the CPU number of current thread.
 
 ```
 	struct pool_workqueue *pwq;
@@ -406,12 +406,16 @@ retry:
 		pwq = unbound_pwq_by_node(wq, cpu_to_node(cpu));
 ```
 
-함수가 하는 일은 사실상 work-queue의 리스트 헤드에 새로운 노드를 추가하는 것이지만, 구현을 보면 간단하지 않습니다. 왜냐면 struct pool_workqueue 라는게 있기 때문입니다.
+What this function does is just adding a list-node into a list.
+But the implementation is not simple.
+That is because it uses struct pool_workqueue.
 
-참고문서
-* http://studyfoss.egloos.com/5626173
+queue_work() didn't pass WQ_UNBOUND flag, so it gets an object of struct pool_workqueue from per-cpu variable wr->cpu_pwqs.
+Let's check what struct pool_workqueue is later.
+But please rembember that work-queue has per-cpu lists and work is added into a list of the same CPU.
+And later the work will be executed on the same CPU.
 
-일단 queue_work에서 WQ_UNBOUND 플래그를 사용하지않았으므로, work-queue에서 cpu_pwqs라는 per-cpu변수에서 pool_workqueue 객체를 가져온다는걸 알 수 있습니다. 이게 뭔지는 나중에 확인하겠습니다. 여기에서 생각해야할 것은 work-queue에 per-cpu변수가 있고, 결국 각 CPU마다 작업이 연결될 것입니다.
+Just go ahead now.
 
 ```
 	struct list_head *worklist;
@@ -428,12 +432,14 @@ retry:
 
 	insert_work(pwq, work, worklist, work_flags);
 ```
-pwq에 현재 실행중인 작업이 몇개인지 세는 pwq->nr_active 카운트를 증가시키고, pwq->pool->worklist 리스트헤드에 work를 추가합니다.
 
+Finally work is added to a list of pwq->pool->worklist.
+And pwq->nr_active has the number of work in the list.
 
-###struct workqueue_struct
+### struct workqueue_struct
 
-workqueue_struct 구조체에서 가장 주의해서 봐야할 것은 우리가 queue_work에서 봤듯이 실제 작업이 연결될 cpu_pwqs 필드입니다.
+Now let's check the definition of workqueue_struct.
+We should look at cpu_pwqs field carefully.
 
 ```
 /*
@@ -476,7 +482,9 @@ struct workqueue_struct {
 	struct pool_workqueue __rcu *numa_pwq_tbl[]; /* PWR: unbound pwqs indexed by node */
 };
 ```
-cpu_pwqs 필드는 per-cpu 변수이고 struct pool_workqueue라는 구조체의 객체입니다. 그리고 pool_workqueue 구조체는 struct worker_pool 구조체를 포함합니다.
+
+cpu_pwqs is per-cpu variable of struct pool_workqueue as following.
+And struct woker_pool is core of struct pool_workqueue.
 
 ```
 struct pool_workqueue {
