@@ -6,10 +6,23 @@
 
 spin_lock함수나 spinlock_t 자료구조등의 코드를 분석해보면 디버깅코드를 빼면 결국 아키텍쳐별 코드로 구현된걸 알 수 있습니다. 성능을 최대한 뽑아내야하니 불가피했을겁니다. 우리는 x86 용 코드를 읽어보겠습니다.
 
-참고자료
-* http://studyfoss.egloos.com/5144295
-* http://barriosstory.blogspot.de/2008/03/cache.html
-* struct arch_spinlock_t
+Old spinlock implementation was based on cmpxchg assembly instruction.
+If cmpxchg instruction suceeds to change a counter from 0 to 1, it acquires the lock.
+If the counter is already 1, it fails to lock.
+But that implementation is very poor for multicore system because one global counter is shared widely.
+
+And there is one more critical problem of cmpxchg based spinlock.
+There is no order in waiting threads.
+So even-if thread A has been waiting the lock first, it could get the lock last.
+
+Therefore kernel v3.3 introduced ticket-based spinlock.
+Let's read core code of the ticket-based spinlock.
+
+reference
+* https://lwn.net/Articles/267968/
+* http://arighi.blogspot.de/2008/12/cacheline-bouncing.html
+
+## struct arch_spinlock_t
 
 struct spinlock_t를 보면 struct raw_spinlock으로 구현됐고 raw_spinlock은 arch_spinlock_t으로 구현된걸 알 수 있습니다.
 ```
