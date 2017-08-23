@@ -10,12 +10,14 @@ enum {
 	BLK_MQ_RQ_QUEUE_BUSY	= 1,	/* requeue IO for later */
 	BLK_MQ_RQ_QUEUE_ERROR	= 2,	/* end IO with error */
 ```
-BLK_MQ_RQ_QUEUE_OK외에도 BUSY와 ERROR 가 있네요. 드라이버가 만약 BLK_MQ_RQ_QUEUE_BUSY가 반환되었을때 블럭 레이어가 어떻게 처리할까요? BLK_MQ_RQ_QUEUE_BUSY의 주석에서 보듯이 나중에 다시 해당 request를 처리하게됩니다. 바로 이렇게 어떤 동작을 나중에 다시 처리하기 위해 만들어진게 work-queue입니다.
 
 There are other values BLK_MQ_RQ_QUEUE_BUSY and ERROR.
 What happens if driver returns BLK_MQ_RQ_QUEUE_BUSY?
 Yes, as the comment shows, corresponding request will be delayed and send to driver later.
-The work-queue is used to do something later.
+
+The work-queue is a kind of queue for the work.
+The work is a job that you want to do later.
+So block layer would create a work-queue for works that have delayed IO handling.
 
 reference
 * https://www.kernel.org/doc/Documentation/workqueue.txt
@@ -166,8 +168,6 @@ Following is parameters of queue_delayed_work_on()
 * dwork: a object struct delayed_work that represent the work (=hctx->run_work)
 * delay: time when the work should be done (=0)
 
-queue_delayed_work_on이 호출될때 전달된 wq 객체는 kblockd_workqueue라는 전역변수입니다. 그리고 dwork 객체는 hctx->run_work입니다. 그럼 kblockd_workqueue가 뭔지, hctx->run_work가 뭔지를 알아보겠습니다.
-
 ### kblockd_workqueue와 hctx->run_work
 
 Following is definition of kblockd_workqueue and how it is initialized.
@@ -307,10 +307,12 @@ So requests in hctx->dispatch are moved to rq_list and sent to driver.
 
 Therefore what kblockd_workqueue() does it just calling `__blk_mq_run_hw_queue` after some delay.
 
-## work-queue의 내부 구현
-이제 대강 work-queue의 사용법을 알았으니, 내부 구현을 한번 보겠습니다.
+## implementation of work-queue
 
-###struct work_struct
+We checked how block layer uses the work-queue, let's check the implementation.
+
+### struct work_struct
+
 이전에 struct blk_mq_hw_ctx 구조체에서 run_work 필드가 work-queue에 추가되는 코드를 봤습니다. run_work필드는 struct delayed_work 구조체이고, struct delayed_work는 struct work_struct구조체에 타이머를 더해서 만들어진 것입니다.
 
 가장 핵심이 되는 struct work_struct 구조체와 struct work_struct 타입의 객체를 초기화하는 ```__INIT_WORK```매크로를 보겠습니다.
