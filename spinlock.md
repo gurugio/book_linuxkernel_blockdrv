@@ -1,11 +1,5 @@
 # spinlock
 
-보통 스핀락하면 정수 카운터를 두고 cmpxchg 명령으로 1을 써본다음 이전값이 0이었으면 락을 얻은 것이고, 1이었으면 다시 시도한다고 알려져있습니다. 저도 그렇게만 생각했었는데요 이번에 코드를 읽어보니 큐 개념을 적용해서 좀더 멀티코어 환경에 맞도록 개선되었습니다. 그래서 간단하게나마 소개해보려고 합니다.
-
-0과 1로 카운터를 두고 락을 표시하면 가장 큰 문제가 먼저 기다린 쓰레드라해도 늦게 락을 얻을 수 있다는 것입니다. 경쟁이 심하지 않다면 문제가 없겠지만, 스핀락 자체가 네트워크 패킷 처리나 메모리 할당 등 경쟁이 심할 수밖에 없는데 사용되는 것이라 고려를 안할 수가 없습니다. 그래서 ticket spinlock이라는게 나왔다고 합니다.
-
-spin_lock함수나 spinlock_t 자료구조등의 코드를 분석해보면 디버깅코드를 빼면 결국 아키텍쳐별 코드로 구현된걸 알 수 있습니다. 성능을 최대한 뽑아내야하니 불가피했을겁니다. 우리는 x86 용 코드를 읽어보겠습니다.
-
 Old spinlock implementation was based on cmpxchg assembly instruction.
 If cmpxchg instruction suceeds to change a counter from 0 to 1, it acquires the lock.
 If the counter is already 1, it fails to lock.
@@ -24,8 +18,17 @@ reference
 
 ## struct arch_spinlock_t
 
-struct spinlock_t를 보면 struct raw_spinlock으로 구현됐고 raw_spinlock은 arch_spinlock_t으로 구현된걸 알 수 있습니다.
+If you check the definition of struct spinlock_t, you would know it is wrapper of arch_spinlock_t.
+
 ```
+#if (CONFIG_NR_CPUS < (256 / __TICKET_LOCK_INC))
+typedef u8  __ticket_t;
+typedef u16 __ticketpair_t;
+#else
+typedef u16 __ticket_t;
+typedef u32 __ticketpair_t;
+#endif
+... skip ...
 typedef struct arch_spinlock {
     union {
 		__ticketpair_t head_tail;
@@ -35,7 +38,10 @@ typedef struct arch_spinlock {
 	};
 } arch_spinlock_t;
 ```
-프로세서 코어가 256개 이상이면 대기하는 쓰레드의 갯수가 많아지므로 데이터 타입의 크기가 커집니다. 일단 256개 이하라고 생각해보면 결국 다음과 같이 됩니다.
+
+If there are many COREs more than 256, struct arch_spinlock will be bigger.
+For example, if there were 256 CPUs, struct arch_spinlock would be as following.
+
 ```
 #define TICKET_LOCK_INC 1
 #define TICKET_SHIFT 8
@@ -52,15 +58,29 @@ typedef struct arch_spinlock
 	};
 } arch_spinlock_t;
 ```
-8비트의 head와 tail이라는 두개의 변수를 가집니다. 이름만 봐도 큐 자료구조의 개념으로 구현되었다는 것을 알 수 있습니다.
 
-큐에 head와 tail이 있습니다. 실제 큐가 아니라 어떤 가상의 큐가 있다고 생각하고, 락을 기다리는 쓰레드를 큐게 넣는다고 가정하는 것입니다. 예를 들어 head=3, tail=3이라고 가정하면 큐에 아무런 쓰레드도 없는 상태이므로, 현재 락은 풀려있는 것입니다. 1번 쓰레드가 락을 잡았다면, 큐의 3번에 1번 쓰레드가 저장됩니다. 그리고 큐에 새로운 쓰레드를 넣었으므로 head=3, tail=4가 됩니다. 2번 쓰레드가 락을 기다린다면 큐의 4번에 쓰레드를 넣고 head=3, tail=5가 됩니다. 계속 다른 쓰레드가 락을 기다린다면 head=3으로 유지되고 tail은 계속 늘어나겠지요.
+There are head and tail.
+Yes, it is based on the queue data structure.
 
-1번 쓰레드가 락을 놓는다면 큐에서 쓰레드를 빼는 것이므로 head값이 늘어납니다. tail값과는 상관없이 head=4가 됩니다. 각 쓰레드는 락을 기다릴때 자기 자신이 저장된 번호을 기억합니다. 2번 쓰레드는 head가 4이므로 자신의 차례라는 것을 알고 락을 잡습니다. 그 이후의 쓰레드들은 계속 기다립니다. 결국 먼저 대기하기 시작한 쓰레드가 먼저 락을 잡게됩니다.
+Let's assume that there is a queue and waiting threads are added into the queue.
+If head=3 and tail=3, there is no thread in the queue, then spinlock is not locked.
+If thread-1 locks the spinlock, queue[3] is set to 1 and head and tail become (head=3,tail=4).
+And if thread-2 waits the spinlock, queue[4] is set to 2 and (head=3,tail=5).
+More threads come, tail will be increased again and again.
+
+If thread-1 releases the spinlock, head becomes 4.
+Each thread remembers its waiting number.
+The thread-2 has 4 waiting number, so thread-2 can lock the spinlock.
+Other threads wait again.
+There is no competetion.
+First come first served.
 
 왜 큐 개념을 적용했는지 이해가 되시리라 믿습니다. 이렇게 각 큐에 넣어주고 각 쓰레드에게 대기번호를 준다는 개념이 티켓과 같다고 해서 ticket spinlock이라고 이름이 지어졌습니다.
 
 그리고 중요한 사실이 하나 더 있는데요. 뒤에 함수 코드를 보면 눈으로 확인할 수 있는데 바로 캐시 미스가 줄어든다는 것입니다. ticket spinlock을 사용하는 각 쓰레드는 자기 고유한 티켓 번호를 받으니까 큐의 head값을 읽기만 합니다. 락을 풀어주는 쓰레드만 head값에 새로운 값을 써줍니다. 
+
+Now you understand where this name came from.
+
 
 ### cmpxchg
 
