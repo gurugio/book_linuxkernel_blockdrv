@@ -559,20 +559,16 @@ struct worker_pool {
 	struct rcu_head		rcu;
 } ____cacheline_aligned_in_smp;
 ```
-커널에 이렇게 주석이 많은 구조체도 많지 않을 것입니다. 그만큼 복잡하고, 성능에 큰 영향을 미치는 구조체들일 것입니다.
 
-###init_workqueues
+### init_workqueues
 
-우선 work-queue를 사용할 수 있도록 초기화를 하는 init_workqueues 함수를 보겠습니다.
+To understand work-queue, let's start with init_workqueues().
+It prepares environment to use the work-queue at early booting step.
 
+First it initializes worker_pool for each CPU.
 ```
 	cpu_notifier(workqueue_cpu_up_callback, CPU_PRI_WORKQUEUE_UP);
-```
-
-cpu_notifier는 각 CPU코어가 동작을 시작하면 호출될 함수들을 등록하는 함수입니다. 따라서 각 CPU 코어마다 workqueue_cpu_up_callback함수를 호출하도록 만들어놓은 것입니다.
-
-그리고 각 CPU 코어를 위한 worker_pool라는걸 만듭니다.
-```
+... skip ...
 	for_each_possible_cpu(cpu) {
 		struct worker_pool *pool;
 
@@ -591,10 +587,13 @@ cpu_notifier는 각 CPU코어가 동작을 시작하면 호출될 함수들을 �
 		}
 	}
 ```
-for_each_cpu_worker_pool 매크로로 감춰져있는데, 실제로는 cpu_worker_pools라는 per-cpu변수를 만드는 코드입니다.
+cpu_worker_pools is a per-cpu variable as following.
+cpu_worker_pools of each CPU has two objects of struct worker_pool.
+for_each_cpu_worker_pool macro generates a loop for each worker_pool of current CPU.
 
-workqueue.c파일의 첫부분을 보면 다음과같이 cpu_worker_pools변수가 정적으로 선언되어있습니다.
 ```
+	NR_STD_WORKER_POOLS	= 2,		/* # standard pools per cpu */
+...skip...
 /* the per-cpu worker pools */
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct worker_pool [NR_STD_WORKER_POOLS],
 				     cpu_worker_pools);
@@ -605,9 +604,10 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct worker_pool [NR_STD_WORKER_POOLS],
 	     (pool)++)
 ```
 
-cpu_worker_pools는 per-cpu변수인데, 각각이 struct worker_pool 타입 객체의 배열로 이루어져있습니다. 쉽게 생각하면 결국 CPU마다 여러개의 worker_pool 객체를 가지고 있게 됩니다.
-
-그리고 바로 이렇게 초기화된 worker_pool을 처음으로 사용하는 함수가 workqueue_cpu_up_callback입니다. init_workqueues는 정적으로 선언된 cpu_worker_pool 객체들의 초기값만을 셋팅해서 준비만 하는 것이고, CPU가 실제로 활성화가 되었을 때 workqueue_cpu_up_callback함수에서 cpu_worker_pool에 연결될 첫번째 쓰레드를 하나씩 만듭니다.
+So init_workqueues() initializes worker_pool for the first CPU.
+Before for_each_cpu_worker_pool() loop, there is a code calling workqueue_cpu_up_callback with cpu_notifier().
+cpu_notifier() calls a function when new CPU is activated.
+Each CPU will call workqueue_cpu_up_callback() when it is powered on.
 
 ```
 static int workqueue_cpu_up_callback(struct notifier_block *nfb,
@@ -629,7 +629,10 @@ static int workqueue_cpu_up_callback(struct notifier_block *nfb,
 		}
 		break;
 ```
-for_each_cpu_worker_pool매크로를 사용해서 각 CPU에 각 worker_pool마다 한번씩 create_worker 함수를 호출합니다.
+workqueue_cpu_up_callback is the same to init_workqueues().
+It initializes work_pool objects for its own CPU.
+
+And both of workqueue_cpu_up_callback() and init_workqueues() calls create_worker().
 
 ```
 static struct worker *create_worker(struct worker_pool *pool)
@@ -659,10 +662,12 @@ static struct worker *create_worker(struct worker_pool *pool)
 	worker->task = kthread_create_on_node(worker_thread, worker, pool->node,
 					      "kworker/%s", id_buf);
 ```
-드디어 struct woker라는 구조체가 나오는데, 바로 실제 실행될 쓰레드를 관리하는 구조체입니다. alloc_worker는 그냥 kzalloc_node를 호출하는 함수인데, 쓰레드가 실행될 CPU로부터 가까운 노드의 메모리를 할당하는 것입니다. 그리고 worker의 구조체를 초기화하고 kthread_create_on_node함수로 쓰레드를 하나 만듭니다. 
-쓰레드의 이름을 보니 "kworker/숫자:숫자"로 나오네요. 진짜 그런 커널 쓰레드가
-있는지 확인해보겠습니다. 2개의 숫자중 앞의 숫자는 pool의 번호나 pool의
-CPU번호가 되고, 두번째 숫자는 ida_simple_get으로 할당받은 임의의 숫자입니다.
+
+Finally there is a familiar structure: struct worker.
+worker is allocated by alloc_worker() that is wrapper of kzalloc_node().
+And worker has a thread with name of "kworker/<cpu>:<id>" or kworker/<cpu>:<id>H" created by kthread_create_on_node().
+
+Following is the result of my notebook.
 ```
 $ ps aux | grep kworker
 root         4  0.0  0.0      0     0 ?        S    15:59   0:00 [kworker/0:0]
@@ -673,10 +678,10 @@ root        24  0.0  0.0      0     0 ?        S<   15:59   0:00 [kworker/2:0H]
 root        30  0.0  0.0      0     0 ?        S    15:59   0:00 [kworker/3:0]
 ...
 ```
-여러개의 쓰레드가 있네요. 만약 kworker라는 이름의 쓰레드가 너무 많거나 이런
-이름의 쓰레드중에 D 상태인 쓰레드가 있다면, 어디선가 잘못된 작업을 생성한 것일
-수 있습니다. 아니면 작업이 종료되지못하고 계속 대기를 하고있을 수도 있습니다.
-kworker쓰레드중에 하나를 골라서 무엇을 실행하고있는지 볼까요.
+
+Yes, my notebook has 4 CPUs.
+Let's check what they are doing.
+
 ```
 $ sudo cat /proc/3129/stack
 [<ffffffff810960bb>] worker_thread+0xcb/0x4c0
@@ -684,13 +689,9 @@ $ sudo cat /proc/3129/stack
 [<ffffffff817fa49f>] ret_from_fork+0x3f/0x70
 [<ffffffffffffffff>] 0xffffffffffffffff
 ```
-현재 worker_thread함수에 머물러 있습니다. 커널을 gdb로 확인해봐도 알겠지만,
-worker_thread의 코드만 봐도, 현재 worker_thread함수안에서 잠든 상태인걸로
-생각됩니다. 만약 잘못된 작업을 실행하고있거나 락에 걸린 작업을 실행중이라면
-다른 함수를 실행하고있다고 나오겠지요. 그렇게 work-queue에 대한 디버깅을 할 수
-있습니다.
 
-이 쓰레드가 하는 일은 worker_thread 함수를 보면 알 수 있습니다.
+All kworker threads are sleeping in worker_thread().
+Let's see what it is.
 
 ```
 static int worker_thread(void *__worker)
@@ -714,11 +715,15 @@ static int worker_thread(void *__worker)
 		}
 	} while (keep_working(pool));
 ```
-최초의 쓰레드가 하는 일은 이 while 루프에 있습니다. 바로 worker_pool에 있는 worklist 리스트를 읽어서 이 리스트에 있는 각 작업들을 실행하는 것입니다. queue_work 함수가 하는 일이 바로 이 worklist 리스트에 새로운 작업을 연결하는 것이었는데, queue_work로 worklist 리스트에 추가된 작업을 실행하는 쓰레드가 만들어지는 것입니다.
 
-###alloc_workqueue
+The pool is worker->pool that is an object of worker_pool that we saw in init_workqueues().
+It extracts a work from pool->worklist and run what work should do.
+queue_work() was a function to add a work into pwq->pool->worklist.
+And worker_thread() is a thread to extract works from pool->worklist.
 
-kblockd_workqueue라는 work-queue가 생성될때 alloc_workqueue라는 함수를 사용했었습니다. alloc_workqueue함수를 알아보겠습니다.
+### alloc_workqueue
+
+kblockd_workqueue is created by alloc_workqueue as following.
 ```
 int __init blk_dev_init(void)
 {
@@ -731,9 +736,9 @@ int __init blk_dev_init(void)
 	if (!kblockd_workqueue)
 		panic("Failed to create kblockd\n");
 ```
-blk_dev_init함수에서 kblockd_workqueue가 생성됩니다.
+Let's check what it is.
 
-alloc_workqueue함수는 ```__alloc_workqueue_key```함수를 호출합니다.
+alloc_workqueue() calls `__alloc_workqueue_key()`.
 ```
 struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 					       unsigned int flags,
@@ -741,6 +746,8 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 					       struct lock_class_key *key,
 					       const char *lock_name, ...)
 {
+	struct workqueue_struct *wq;
+	struct pool_workqueue *pwq;
 ...
     wq = kzalloc(sizeof(*wq) + tbl_size, GFP_KERNEL);
 
@@ -759,13 +766,15 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 	INIT_LIST_HEAD(&wq->flusher_overflow);
 	INIT_LIST_HEAD(&wq->maydays);
 ```
-새로운 workqueue_struct 타입의 객체를 만들어야하므로 kzalloc으로 메모리를 할당받습니다. 그리고 각 필드를 초기화합니다. max_active가 0이면 256으로 바꿉니다. 총 256개의 작업이 연결될 수 있다는 것입니다.
+New object of struct workqueue_struct is created by kzalloc().
+And each field of the object is initialized.
+Maximum number of the work-queue is 256.
 
 ```
 	if (alloc_and_link_pwqs(wq) < 0)
 		goto err_free_wq;
 ```
-alloc_and_link_pwqs는 workqueue_struct에서 cpu_pwqs필드를 초기화하는 함수입니다.
+alloc_and_link_pwqs() initializes cpu_pwqs field of struct workqueue_struct.
 ```
 static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 {
@@ -791,20 +800,16 @@ static int alloc_and_link_pwqs(struct workqueue_struct *wq)
 		}
 		return 0;
 ```
-alloc_percpu는 매크로함수입니다. 인자로 전달한 구조체의 타입을 확인해서 해당 타입의 per-cpu변수를 만듭니다.
 
-```
-#define alloc_percpu(type)						\
-	(typeof(type) __percpu *)__alloc_percpu(sizeof(type),		\
-						__alignof__(type))
-```
-이렇게 cpu_pwqs객체를 만들었으면 각 CPU 코어별 cpu_worker_pools 객체와 struct pool_workqueue 객체를 연결합니다.
-결국 per-cpu변수라는걸 무시하고 보면 최종적으로 이렇게 된다고 보면 됩니다.
+cpu_pwqs field is per-cpu variable for struct pool_workqueue.
+If system had single core, it would be like following.
 ```
 wq->cpu_pwqs->pool = cpu_worker_pools;
 ```
 
 간단하게 생각하면 모든 work-queue가 공유할 cpu_worker_pools를 만든 다음 cpu_worker_pools에 작업들을 연결하는 것입니다. 만약 각 work-queue가 자기만의 per-cpu 변수를 만들어서 쓰레드를 관리한다면, 프로세서가 256개가 있는 대규모 서버에서는 하나의 work-queue가 256개의 쓰레드를 생성하게 될 것이고, 시스템에 10개의 work-queue만 있어도 2560개의 쓰레드가 됩니다. 당연히 이렇게 모든 work-queue가 공유할 리스트를 만들고, 거기에 각 work-queue는 작업만 추가하게되면 불필요한 쓰레드를 만들 필요가 없겠지요.
+
+
 
 다시한번 참고문서를 보시면서 이전 버전에서는 어떻게 구현되었었고, 어떤 문제가 생겨서 왜 이런 디자인이 되었는지를 보신다면 전체적인 설계에 대해 감이 오실것입니다.
 참고: http://studyfoss.egloos.com/5626173
