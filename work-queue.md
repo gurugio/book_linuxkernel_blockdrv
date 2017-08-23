@@ -1,6 +1,8 @@
 # work-queue
 
-mybrd에서 multi-queue모드로 동작할때 request를 받아서 처리하는 mybrd_queue_rq함수가 있었습니다. 이 함수는 항상 BLK_MQ_RQ_QUEUE_OK라는 함수를 반환합니다. 다음은 include/linux/blk-mq.h 파일에서 BLK_MQ_RQ_QUEUE_OK가 정의된 코드입니다.
+There is mybrd_queue_rq() function in mybrd driver.
+It always returns BLK_MQ_RQ_QUEUE_OK value.
+Following is definition of BLK_MQ_RQ_QUEUE_OK.
 
 ```
 enum {
@@ -10,27 +12,27 @@ enum {
 ```
 BLK_MQ_RQ_QUEUE_OK외에도 BUSY와 ERROR 가 있네요. 드라이버가 만약 BLK_MQ_RQ_QUEUE_BUSY가 반환되었을때 블럭 레이어가 어떻게 처리할까요? BLK_MQ_RQ_QUEUE_BUSY의 주석에서 보듯이 나중에 다시 해당 request를 처리하게됩니다. 바로 이렇게 어떤 동작을 나중에 다시 처리하기 위해 만들어진게 work-queue입니다.
 
-블럭레이어에서 IO처리를 work-queue에서 한다는 것은 work-queue의 특징을 잘 설명해줍니다. mybrd드라이버만해도 데이터처리를 위해 페이지를 할당합니다. 페이지 할당에서 주의해야할 것은 만약 시스템에 페이지가 부족한 상황이라면 프로세스가 잠들 수 있다는 것입니다. 따라서 work-queue에서 처리해야할 작업들도 수행도중 잠들 수 있다는걸 전제로 동작해야합니다. 또 그렇기 때문에 work-queue에서 처리할 작업들을 실행할 쓰레드가 필요합니다. 그래야 쓰레드가 실행되다가 잠들어서 시스템은 멈추지 않겠지요. 그리고 어떤 한 CPU에서 work-queue에 작업을 추가했으면, 이왕이면 같은 CPU에서 작업이 처리되는게 캐시 히트를 늘릴 수 있을겁니다. 반대로 해당 CPU가 계속 바쁠경우에 다른 CPU로 전달할 수도 있어야합니다.
+There are other values BLK_MQ_RQ_QUEUE_BUSY and ERROR.
+What happens if driver returns BLK_MQ_RQ_QUEUE_BUSY?
+Yes, as the comment shows, corresponding request will be delayed and send to driver later.
+The work-queue is used to do something later.
 
-이런 여러가지 필요성들을 구현한게 work-queue라는걸 생각하면서 코드를 보겠습니다.
+reference
+* https://www.kernel.org/doc/Documentation/workqueue.txt
+* http://www.makelinux.net/ldd3/chp-7-sect-6
 
-참고자료
+## blk_mq_run_hw_queue
 
-https://www.kernel.org/doc/Documentation/workqueue.txt
-http://www.makelinux.net/ldd3/chp-7-sect-6
-http://studyfoss.egloos.com/5626173
+Let's take a look at BLK_MQ_RQ_QUEUE_BUSY handling.
 
-##blk_mq_run_hw_queue
+We already checked the callstack of mybrd_queue_rq() as following.
 
-블럭 장치의 성능이 한계가 있으므로 당연히 장치에 너무 많은 데이터가 몰리면 드라이버가 다 처리를 못할 경우가 있을겁니다. 그럴때를 위해 BLK_MQ_RQ_QUEUE_BUSY 값이 정의되었을겁니다. 실제 코드에서 BLK_MQ_RQ_QUEUE_BUSY값을 어떻게 처리하는지를 보겠습니다.
-
-이전에 mybrd_queue_rq함수가 어떤 경로로 호출되는지 콜스택을 확인했었습니다.
 ```
 blk_sq_make_request -> blk_mq_run_hw_queue -> __blk_mq_run_hw_queue -> mybrd_queue_rq
 ```
-이런 순서로 호출된다는걸 확인했었습니다.
 
-```__blk_mq_run_hw_queue```에서 다음과 같이 q->mq_ops->queue_rq에 저장된 mybrd_queue_rq 함수를 호출하는걸 확인할 수 있습니다.
+We can check `__blk_mq_run_hw_queue` calls callback of q->mq_ops->queue_rq that is mybrd_queue_rq as following.
+
 ```
     while (!list_empty(&rq_list)) {
 		struct blk_mq_queue_data bd;
@@ -60,9 +62,10 @@ blk_sq_make_request -> blk_mq_run_hw_queue -> __blk_mq_run_hw_queue -> mybrd_que
 			break;
 		}
 ```
-만약 반환값이 BLK_MQ_RQ_QUEUE_OK라면 계속 while 루프를 돌면서 rq_list에 있는 모든 request를 드라이버로 전달할 것입니다. 그리고 만약 반환값이 BLK_MQ_RQ_QUEUE_BUSY라면 while 루프를 빠져나옵니다.
 
-while 루프를 빠져나왔다면 다음과 같이 rq_list에 아직 처리못한 request가 남아있을 것입니다.
+If the return valu is BLK_MQ_RQ_QUEUE_OK, it will handle other request in rq_list list.
+Of if the return value is BLK_MQ_RQ_QUEUE_BUSY, it put the request back to rq_list list and exit the loop.
+
 ```
     /*
 	 * Any items that need requeuing? Stuff them into hctx->dispatch,
@@ -84,9 +87,11 @@ while 루프를 빠져나왔다면 다음과 같이 rq_list에 아직 처리못�
 		blk_mq_run_hw_queue(hctx, true);
 	}
 ```
-코드를 보면 아직 처리못한 request들을 hctx->dispatch 리스트로 옮긴 후 blk_mq_run_hw_queue 함수를 다시 호출합니다. 여기에서 두번째 인자가 true인것을 잘 봐야합니다.
 
-다음은 blk_mq_run_hw_queue함수의 코드입니다.
+Then if rq_list is not empty, driver is busy and is not able to handle IO at the moment.
+If so, it moves requests to hctx->dispatch list and calls blk_mq_run_hw_queue with trun as the second argument.
+
+Following is blk_mq_run_hw_queue() code.
 ```
 void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async)
 {
@@ -109,7 +114,10 @@ void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async)
 			&hctx->run_work, 0);
 }
 ```
-두번째 인자 async가 false이면 __blk_mq_run_hw_queue를 호출해서 드라이버로 request를 전달합니다. 하지만 true이면 kblockd_schedule_delayed_work_on 함수를 호출합니다.
+
+If async argument is false, it calls `__blk_mq_run_hw_queue()` and sends requests to driver.
+Of if async is true, it calls kblockd_schedule_delayed_work_on().
+
 ```
 int kblockd_schedule_delayed_work_on(int cpu, struct delayed_work *dwork,
     			     unsigned long delay)
@@ -118,7 +126,7 @@ int kblockd_schedule_delayed_work_on(int cpu, struct delayed_work *dwork,
 }
 EXPORT_SYMBOL(kblockd_schedule_delayed_work_on);
 ```
-그리고 kblockd_schedule_delayed_work_on 함수를 보면 드디어 work-queue가 사용됩니다. 
+kblockd_schedule_delayed_work_on() passes a work-queue, kblockd_workqueue, to queue_delayed_work_on().
 ```
 /**
  * queue_delayed_work_on - queue work on specific CPU after delay
@@ -152,35 +160,18 @@ bool queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 EXPORT_SYMBOL(queue_delayed_work_on);
 ```
 
-queue_delayed_work_on의 인자는 다음과 같습니다.
-* cpu: 처리해야할 작업이 실행될 프로세서 번호
-* wq: work-queue를 표현하는 struct workqueue_struct 타입의 객체
-* dwork: 처리해야할 작업을 표현하는 struct delayed_work 타입의 객체
-* delay: 작업을 얼마나 나중에 처리해야할지 시간
-
+Following is parameters of queue_delayed_work_on()
+* cpu: cpu number to run the work (
+* wq: a object of struct workqueue_struct that represent the work-queue (=kblockd_workqueue)
+* dwork: a object struct delayed_work that represent the work (=hctx->run_work)
+* delay: time when the work should be done (=0)
 
 queue_delayed_work_on이 호출될때 전달된 wq 객체는 kblockd_workqueue라는 전역변수입니다. 그리고 dwork 객체는 hctx->run_work입니다. 그럼 kblockd_workqueue가 뭔지, hctx->run_work가 뭔지를 알아보겠습니다.
 
-###kblockd_workqueue와 hctx->run_work
-우선 kblockd_workqueue라는게 어떻게 만들어지는지부터 보겠습니다.
-```
-~/work/linux-torvalds $ /bin/grep kblockd_workqueue * -R
-Binary file GSYMS matches
-System.map:ffffffff82107210 b kblockd_workqueue
-Binary file block/blk-core.o matches
-Binary file block/built-in.o matches
-block/blk-core.c:static struct workqueue_struct *kblockd_workqueue;
-block/blk-core.c:    	queue_delayed_work(kblockd_workqueue, &q->delay_work,
-block/blk-core.c:		mod_delayed_work(kblockd_workqueue, &q->delay_work, 0);
-block/blk-core.c:	return queue_work(kblockd_workqueue, work);
-block/blk-core.c:	return queue_delayed_work(kblockd_workqueue, dwork, delay);
-block/blk-core.c:	return queue_delayed_work_on(cpu, kblockd_workqueue, dwork, delay);
-block/blk-core.c:	kblockd_workqueue = alloc_workqueue("kblockd",
-block/blk-core.c:	if (!kblockd_workqueue)
-Binary file vmlinux matches
-Binary file vmlinux.o matches
-```
-검색을 해보니 kblockd_workqueue는 block/blk-core.c에 정의된 전역변수였습니다.
+### kblockd_workqueue와 hctx->run_work
+
+Following is definition of kblockd_workqueue and how it is initialized.
+
 ```
 /*
  * Controlling structure to kblockd
@@ -198,7 +189,11 @@ int __init blk_dev_init(void)
 	if (!kblockd_workqueue)
 		panic("Failed to create kblockd\n");
 ```
-그리고 blk_dev_init함수에서 alloc_workqueue라는 함수로 "kblockd"라는 이름의 work-queue를 만든다는걸 알 수 있습니다. 이전에 work-queue라는것은 실행될 쓰레드가 있어야한다고 말했습니다. 그럼 kblockd라는건 쓰레드의 이름일 것입니다. ps 명령으로 확인해보겠습니다.
+
+blk_dev_init() creates a work-queue with name "kblockd".
+Work-queue should work with its own thread.
+Let's check if there is a thread with name "kblockd"
+
 ```
 $ ps aux | grep kblock
 root        73  0.0  0.0      0     0 ?        S<   Dez05   0:00 [kblockd]
@@ -206,22 +201,41 @@ root        73  0.0  0.0      0     0 ?        S<   Dez05   0:00 [kblockd]
 gohkim   24240  0.0  0.0  16408  2524 pts/25   S+   16:15   0:00 grep --color=auto kblock
 $ 
 ```
-역시 쓰레드의 이름이었네요.
-
-우리는 결국 시스템에 kblockd라는 쓰레드가 존재하면서, 디스크 장치가 포화상태여서 처리하지못한 IO를 처리하도록 도와준다는걸 알게되었습니다. 그럼 만약 kblockd의 cpu 점유율이 높다면 뭔가 디스크가 바쁘다는 것을 의미하겠네요.
+Yes, there is kernel thread with name of kblockd.
+Let's check what it is doing.
 ```
-$ top -b -n 1 | grep kblockd
-   73 root       0 -20       0      0      0 S   0,0  0,0   0:00.00 kblockd
+$ sudo cat /proc/66/stack
+[sudo] password for gohkim: 
+[<ffffffff82aa2c89>] rescuer_thread+0x339/0x3c0
+[<ffffffff82aa8d89>] kthread+0x109/0x140
+[<ffffffff832dbf3c>] ret_from_fork+0x2c/0x40
+[<ffffffffffffffff>] 0xffffffffffffffff
 ```
-제가 글을 쓰면서 top 명령으로 kblockd쓰레드의 상태를 보니 잠든 상태입니다. 현재 블럭장치들이 매우 한가한 상태로 보입니다.
 
-참고로 이렇게 커널을 분석하다보면 시스템의 동작이 눈에 들어오고, 결국 시스템에 어떤 문제가 생겼을때 어떤 원인을 조사해야한다는게 머리속에 그려질 것입니다. 리눅스 운영체제에서 문제가 생겼을 가능성은 적을 것입니다. 하지만 리눅스 커널의 어느 부분에서 문제가 생겼다는걸 알면, 그 부분을 사용하는 드라이버나 데몬, 어플이 문제를 일으켰다는걸 알 수 있고, 결국 커널이 아닌 내가 개발한 드라이버나 어플이 어떤걸 처리하다가 문제를 일으켰는지를 찾을 수 있겠지요.
+If you investigate alloc_workqueue() function, you woll find following code.
 
-work-queue자체에 대한 분석은 일단 뒤로하고, kblockd_workqueue라는 work-queue가 어떻게 생성되었는지를 알았으니, 이제 work-queue에 블럭레이어가 어떻게 작업을 추가하는지를 알아보겠습니다.
+```
+struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
+					       unsigned int flags,
+					       int max_active,
+					       struct lock_class_key *key,
+					       const char *lock_name, ...)
+... skip ...
+		rescuer->task = kthread_create(rescuer_thread, rescuer, "%s",
+					       wq->name);
+```
 
-우리는 blk_mq_run_hw_queue함수에서 hctx->run_work라는 객체가 kblockd_workqueue에 추가된다는걸 알았습니다. 그러므로 hctx->run_work가 어디에서 초기화되는지를 찾으면 어떤 작업인지를 알 수 있습니다.
+kthread_create() function creates a thread that runs rescuer_thread().
+The rescuer_thread() has infinite loop, so kblockd thread was sleeping in rescuer_thread().
 
-grep을 쓰면 어렵지않게 blk_mq_init_hctx가 초기화되는 함수를 찾을 수 있습니다.
+We confirm that work-queue has its own thread.
+And we find out there is kblockd_workqueue work-queue for block layer.
+Let's investigate the work-queue later in detail.
+
+First we need to check how block layer uses the work-queue kblockd_workqueue.
+We already found out blk_mq_run_hw_queue() adds a work hctx->run_work into kblockd_workqueue.
+So let's check what hctx->run_work is.
+
 ```
 static int blk_mq_init_hctx(struct request_queue *q,
     	struct blk_mq_tag_set *set,
@@ -236,7 +250,11 @@ static int blk_mq_init_hctx(struct request_queue *q,
 
 	INIT_DELAYED_WORK(&hctx->run_work, blk_mq_run_work_fn);
 ```
-blk_mq_init_hctx함수에서 INIT_DELAYED_WORK매크로를 통해 hctx->run_work를 초기화합니다. blk_mq_run_work_fn함수가 사용되는데 바로 이 함수가 work-queue에서 호출되는 함수입니다. blk_mq_run_work_fn의 코드를 볼까요.
+
+blk_mq_init_hctx() initializes hctx->run_work with INIT_DELAYED_WORK macro.
+blk_mq_run_work_fn is a callback function registerred in hctx->run_work.
+
+Let's check what blk_mq_run_work_fn() does.
 ```
 static void blk_mq_run_work_fn(struct work_struct *work)
 {
@@ -247,7 +265,8 @@ static void blk_mq_run_work_fn(struct work_struct *work)
 	__blk_mq_run_hw_queue(hctx);
 }
 ```
-결국 다시 __blk_mq_run_hw_queue를 호출합니다.
+It calls `__blk_mq_run_hw_queue()` again.
+
 ```
 static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 {
@@ -281,11 +300,14 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 		spin_unlock(&hctx->lock);
 	}
 ```
-그리고 이전에 처리하지못한 request들을 hctx->dispatch 리스트에 추가해놨었는데, 이제 이 request들을 rq_list 리스트로 옮겨서 while루프를 돌면서 드라이버를 호출합니다.
 
-결국 __blk_mq_run_hw_queue함수를 호출하는 작업을 지연시키켜서 다시 호출하는게 kblockd_workqueue의 역할이라는걸 알았습니다.
+Delayed requests were added into hctx->dispatch list.
+Now hctx->displatch is not empty.
+So requests in hctx->dispatch are moved to rq_list and sent to driver.
 
-##work-queue의 내부 구현
+Therefore what kblockd_workqueue() does it just calling `__blk_mq_run_hw_queue` after some delay.
+
+## work-queue의 내부 구현
 이제 대강 work-queue의 사용법을 알았으니, 내부 구현을 한번 보겠습니다.
 
 ###struct work_struct
