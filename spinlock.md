@@ -9,7 +9,7 @@ And there is one more critical problem of cmpxchg based spinlock.
 There is no order in waiting threads.
 So even-if thread A has been waiting the lock first, it could get the lock last.
 
-Therefore kernel v3 introduced ticket-based spinlock.
+Therefore kernel v2.6.25 introduced ticket-based spinlock.
 Let's read core code of the ticket-based spinlock.
 
 reference
@@ -75,21 +75,20 @@ Other threads wait again.
 There is no competetion.
 First come first served.
 
-왜 큐 개념을 적용했는지 이해가 되시리라 믿습니다. 이렇게 각 큐에 넣어주고 각 쓰레드에게 대기번호를 준다는 개념이 티켓과 같다고 해서 ticket spinlock이라고 이름이 지어졌습니다.
-
-그리고 중요한 사실이 하나 더 있는데요. 뒤에 함수 코드를 보면 눈으로 확인할 수 있는데 바로 캐시 미스가 줄어든다는 것입니다. ticket spinlock을 사용하는 각 쓰레드는 자기 고유한 티켓 번호를 받으니까 큐의 head값을 읽기만 합니다. 락을 풀어주는 쓰레드만 head값에 새로운 값을 써줍니다. 
-
 Now you understand where this name came from.
 
 There is one important but invisible benefit of this algorithm.
-This can minimize cache bouncing
+This can minimize cache bouncing.
+Please check following reference for cache issue
+* https://lwn.net/Articles/531254/
 
 ### cmpxchg
 
-참고자료
+Let's check what cmpxchg is.
+
+cmpxchg is described as following pseudo code.
 * http://x86.renejeschke.de/html/file_module_x86_id_41.html
 
-참고로 비트값 기반 스핀락에서 사용하는 cmpxchg 명령에 대해서 생각해보겠습니다.
 ```
 /*
 accumulator = AL, AX, or EAX, depending on whether
@@ -104,17 +103,20 @@ else {
 	accumulator = Destination;
 }
 ```
-참고자료에 보면 의사코드로 cmpxchg가 어떤 일을 하는지 보여줍니다. 메모리에 있는 값이 0이면 1로 바꾸려고 할때 cmpxchg(&spinlock, 0, 1)과 같이 호출합니다. 그러면 cmpxchg 명령은 메모리 값이 0인지 확인해서 0일때만 메모리에 1을 씁니다. 메모리 값이 1이면 메모리를 읽어오기만 하지요.
 
-결국 스핀락을 기다리는 쓰레드들이 여러개의 코어에서 실행되고 있다면, 각 코어들은 메모리 읽기만을 계속 하고 있을것입니다. 매번 메모리로부터 프로세서 레지스터로 데이터가 계속 올라오는게 아니라 캐시에서 읽어올 것입니다. 그러다가 하나의 코어에서 락을 풀면서 메모리에 0을 쓰는 순간, 다른 코어들로 cache bouncing 신호 (인텔은 IPI라고 부르는)들이 전파되고, 모든 코어가 일제히 캐시 라인 크기 (인텔은 64바이트)씩 메모리를 읽게됩니다. 게중에 먼저 실행되서 메모리 버스의 락을 잡은 코어는 메모리에 1을 쓸것이고, 다른 코어들은 늦었으므로 메모리 값이 1인것만 보겠지요. 그렇게 또 다른 코어들은 계속 캐시를 읽을 것입니다.
+cmpxchg checks memory value and write 1 only-if its value is 0.
+If the memory value is 1, it only read the value.
 
-만약 아주 짧은 critical section을 가지고있으면서 자주 실행되는 코드라면 cache bouncing이 자주 일어나고, 많은 코어들이 캐시가 아닌 메모리를 읽는 상황이 자주 발생되니 결국 시스템 전체 성능이 떨어질 것입니다.
+If many threads are waiting for the lock on many CPUs, each thread is running a loop to read cache.
+And if one thread unlock the lock with writing 0, its CPU sends signal to other CPUs and many CPUs refresh cache.
+Cache line is 128-byte on the latest CPU.
+So one cach flush or bounce generates 128-byte data transfer.
+If critical section is shorter or lock contention is heavier, or there are more CPUs, scalability will be worse.
 
-###arch_spin_lock
+### arch_spin_lock
 
-이제 막 초기화된 spinlock은 (head,tail)=(0,0) 값을 가질 것입니다. 락을 잡는 쓰레드는 tail값이 자기 티켓 번호가 되므로 tail값을 읽어서 보관하고, tail값을 증가시키고 종료합니다.
+Let's take a look at the ticket spinlock implementation.
 
-락을 기다리는 쓰레드는 tail값을 읽어서 보관하고 tail 값을 증가시킵니다. 그리고 head값이 자기 티켓 번호와 같아질때까지 루프를 돕니다.
 ```
 static __always_inline void arch_spin_lock(arch_spinlock_t *lock)
 {
@@ -141,11 +143,15 @@ out:
 	barrier();	/* make sure nothing creeps before the lock is taken */
 }
 ```
-xadd는 atomic하게 값을 더해주고, 더하기 이전의 값을 반환해줍니다. 즉 tail값에 TICKET_LOCK_INC만큼 더해주는데 이 값은 1입니다.
 
-지역변수 inc에는 더하기 이전의 값이 저장될 것이고, 더하기 이전에 head와 tail이 같다면 비어있는 큐에 처음 쓰레드가 들어온 것입니다. 결국 락을 기다리는 쓰레드가 없다는 것이므로 바로 락을 잡은 것입니다.
+The initial value of the spinlock is (head,tail)=(0,0).
+It increases tail value with xadd() and stores old tail value into inc variable.
+From now, inc.tail value is ticket number of the thread.
+If old tail and head are the same, the lock was acquired.
+If not, thread starts loop until head value becomes ticket value (=inc.tail).
 
-락을 잡은 쓰레드가 락을 풀어준다면 head값이 증가할 것입니다. 그래서 루프를 돌면서 head값을 읽습니다. 이때 READ_ONCE를 씁니다.
+Let's look into READ_ONCE() macro that used to read memory value.
+
 ```
 #define __READ_ONCE_SIZE    					\
 ({									\
@@ -161,26 +167,28 @@ xadd는 atomic하게 값을 더해주고, 더하기 이전의 값을 반환해�
 	}								\
 })
 ```
-READ_ONCE는 __READ_ONCE_SIZE를 호출하는데 결국 포인터를 volatile로 타입을 바꿔서 값을 읽을때마다 반드시 메모리를 읽도록 해주는 것입니다. 컴파일러는 같은 값을 계속 읽는 코드를 보면 값을 레지스터에 저장하려고 할 것입니다. 메모리를 읽는 것보다는 레지스터를 읽는게 더 빠르니까요. 하지만 위와 같은 경우는 반드시 매번 메모리를 읽어야합니다. 레지스터만 읽어서는 다른 프로세서에서 값을 바꾼걸 알아차릴 수 없습니다. 그래서 volatile로 타입을 바꿔서 읽는 코드를 추가해서 컴파일러가 최적화를 못하도록 한 것입니다.
 
-__tickets_equal은 2개의 정수값을 비교하는데 xor 연산자를 씁니다. 그 이유는 어셈블리 명령에서 cmp보다 xor이 빠르기때문으로 생각됩니다. 어쨌든 단순히보면 값을 비교하는 것뿐입니다.
+READ_ONCE() is wrapper of `__READ_ONCE_SIZE` that changes pointer to volatile type and read memory.
+Compiler optimization usually stores value in register because it's faster.
+So if there is loop to read one variable again and again, compiler could optimiza it with read variable once.
+And the variable would be stored in register.
 
-```__ticket_lock_spinning```이나 __ticket_check_and_clear_slowpath 함수는 일반적으로는 사용되지않으니 무시해도 될것 같습니다.
+Spinlock code must read memory value to check its change.
+Changing memory is up to CPU because there is cache layer between memory and CPU.
+But if compiler optimizes the spinlock code to read register, it cannot detect memory change.
 
-함수 마지막 꼭 barrier를 넣어야한다는 것을 기억하면 좋을것 같습니다.
+So READ_ONCE use volatile type pointer to prevent compiler from optimizing memory reading.
+WRITE_ONCE also uses the same way.
 
-###arch_spin_unlock
+### arch_spin_unlock
 
-개념적으로 큐에서 쓰레드를 빼는 것이니 head값을 증가시켜주면 끝입니다.
+Unlocking is simple.
+It just add the head value as following.
 ```
     	__add(&lock->tickets.head, TICKET_LOCK_INC, UNLOCK_LOCK_PREFIX);
 ```
 
-###arch_spin_trylock
+### arch_spin_trylock
 
-trylock은 계속 시도하는게 아니므로 메모리에 쓰기가 발생해도 괸찮겠지요. 그래서 cmpxchg를 써서 값을 갱신해보는걸로 락을 시험합니다.
-
-큐와 티켓의 개념만 알면 간단한 코드입니다만 그런 배경지식이 없이 본다면 막막할 수 있는 코드라고 생각됩니다. 다행히 좋은 참고자료가 있어서 저도 쉽게 이해할 수 있었습니다.
-
-
-
+trylock doesn't have loop.
+So it uses cmpxchg to test the lock as old style spinlock.
