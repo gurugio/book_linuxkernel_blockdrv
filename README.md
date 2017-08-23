@@ -1,7 +1,5 @@
 gitbook: https://gurugio.gitbooks.io/linuxkernel_blockdriver/content/
 
-(On translation)
-
 # Multi-queue block device in Linux kernel v4.4
 
 Several years ago, a new concept was merged into the block layer of Linux kernel. Before that every single block device has one queue for IO handling. Every processes inserted an IO request into the queue and block device driver extract a request from the queue. Yes, one queue was shared for many processes and for many processors.
@@ -32,20 +30,19 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 
 # INDEX
 
-(I'm working on tranlsation)
-* [prepare](environment.md) - done
-* [skeleton of mybrd](mybrd_skeleton.md) - done
-* [disk](create_disk.md) - done
-* [ramdisk](create_ramdisk.md) - done
-* [request-mode](request-mode.md) - done
-* [multiqueue-mode](multiqueue-mode.md) - done
-* [pagecache and blockdriver](pagecacheand_blockdriver.md) - done
-* [experiement for the page cache](pagecache_ex.md) - done
-* [page-flags](page-flags.md) - done
-* [system calls and flushing block device](systemcall_flushblock.md) - done
-* [per-cpu variable and statistics (v2.6.11)](per-cpu_statistics.md) - done
-* [wait-queue](wait-queue.md) - done
-* [spinlock](spinlock.md) - done
+* [prepare](environment.md)
+* [skeleton of mybrd](mybrd_skeleton.md)
+* [disk](create_disk.md)
+* [ramdisk](create_ramdisk.md)
+* [request-mode](request-mode.md)
+* [multiqueue-mode](multiqueue-mode.md)
+* [pagecache and blockdriver](pagecacheand_blockdriver.md)
+* [experiement for the page cache](pagecache_ex.md)
+* [page-flags](page-flags.md)
+* [system calls and flushing block device](systemcall_flushblock.md)
+* [per-cpu variable and statistics (v2.6.11)](per-cpu_statistics.md)
+* [wait-queue](wait-queue.md)
+* [spinlock](spinlock.md)
 * [work-queue](work-queue.md)
 
 
