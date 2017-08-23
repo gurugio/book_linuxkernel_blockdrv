@@ -9,7 +9,7 @@ And there is one more critical problem of cmpxchg based spinlock.
 There is no order in waiting threads.
 So even-if thread A has been waiting the lock first, it could get the lock last.
 
-Therefore kernel v3.3 introduced ticket-based spinlock.
+Therefore kernel v3 introduced ticket-based spinlock.
 Let's read core code of the ticket-based spinlock.
 
 reference
@@ -81,6 +81,8 @@ First come first served.
 
 Now you understand where this name came from.
 
+There is one important but invisible benefit of this algorithm.
+This can minimize cache bouncing
 
 ### cmpxchg
 
