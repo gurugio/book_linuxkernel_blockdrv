@@ -807,9 +807,22 @@ If system had single core, it would be like following.
 wq->cpu_pwqs->pool = cpu_worker_pools;
 ```
 
-간단하게 생각하면 모든 work-queue가 공유할 cpu_worker_pools를 만든 다음 cpu_worker_pools에 작업들을 연결하는 것입니다. 만약 각 work-queue가 자기만의 per-cpu 변수를 만들어서 쓰레드를 관리한다면, 프로세서가 256개가 있는 대규모 서버에서는 하나의 work-queue가 256개의 쓰레드를 생성하게 될 것이고, 시스템에 10개의 work-queue만 있어도 2560개의 쓰레드가 됩니다. 당연히 이렇게 모든 work-queue가 공유할 리스트를 만들고, 거기에 각 work-queue는 작업만 추가하게되면 불필요한 쓰레드를 만들 필요가 없겠지요.
+# summary
 
+In short, when we add a new work into a workqueue, the work is not actually added into the workqueue.
+cpu_worker_pool is a kind of pool of workers of one CPU.
+And all work is added into the cpu_worker_pool of its CPU without caring what workqueue the work is belong to.
 
+Actually old work-queue implementation is not like that.
+Each work-queue has its own thread on every CPUs.
+For example, if block device driver adds request-handling work into kblockd_workqueue, kblockd_workqueue has per-cpu list of work and the work is added to per-cpu list of kblockd_workqueue.
+One problem is kblockd_workqueue should has threads for all CPUs.
+The block layer can send work on any CPU.
+So kblockd_workqueue should create many threads for each CPU, for instance [kworker/kblockd/0:0], [kworker/kblockd/1:0], [kworker/kblockd/2:0], [kworker/kblockd/3:0], if system has four CPUs.
 
-다시한번 참고문서를 보시면서 이전 버전에서는 어떻게 구현되었었고, 어떤 문제가 생겨서 왜 이런 디자인이 되었는지를 보신다면 전체적인 설계에 대해 감이 오실것입니다.
-참고: http://studyfoss.egloos.com/5626173
+If system has 10 work-queues and 4 CPUSs, there would be 40 threads.
+If system has 20 work-queues and 64 CPUs, there would be 1280 threads.
+Can you guess how much memory or resources 1280 idle threads wastes?
+The old work-queue implementation is not good for modern many-core system.
+
+So kernel developers designed the cpu_work_pool concepts and provided the common pool of works for all work-queues.
