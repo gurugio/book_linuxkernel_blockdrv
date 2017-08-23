@@ -1,4 +1,4 @@
-gitbook: https://gurugio.gitbooks.io/linuxkernel_blockdriver/content/
+_First, thank you for taking the time to read my book! I want to point out that English is not my first language and you're welcome to give me any feedback for my poor English._
 
 # Multi-queue block device in Linux kernel v4.4
 
