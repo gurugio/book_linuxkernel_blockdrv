@@ -45,7 +45,7 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 * [system calls and flushing block device](systemcall_flushblock.md) - done
 * [per-cpu variable and statistics (v2.6.11)](per-cpu_statistics.md) - done
 * [wait-queue](wait-queue.md) - done
-* [spinlock](spinlock.md)
+* [spinlock](spinlock.md) - done
 * [work-queue](work-queue.md)
 
 
