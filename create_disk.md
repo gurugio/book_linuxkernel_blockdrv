@@ -2,7 +2,7 @@
 
 Finally we can start developing a block device.
 Until last chapter, we set up an environment to test our driver and created a skeleton code.
-In this chapter, we will created a virtual disk and check how data is transferred between kernel and the block driver.
+In this chapter, we will be creating  a virtual disk and check how data is transferred between  the kernel and the block driver.
 
 reference: https://lwn.net/Articles/25711/
 driver source: https://github.com/gurugio/mybrd/blob/ch02-disk/mybrd.c
