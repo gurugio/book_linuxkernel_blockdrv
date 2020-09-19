@@ -10,29 +10,25 @@ The best solution we have now is RCU to run one write-thread and many read-threa
 
 Unfortunately there are some constrains:
 1. read-thread cannot read the latest data that the write-thread just has written.
-1. 
+1. write-thread waits for all read-lock to be unlocked.
+1. Only one write-thread can run. You must use spinlock to synchronize data for many write-thread.
 
-기본적으로 rcu는 하나의 write와 여러개의 read쓰레드가 동시에 실행될 수 있게 해줍니다. rwlock과 마찬가지로 여러개의 read가 동작하게 해주는데, rwlock은 write와 read가 동시에 실행되지는 못합니다. 하지만 rcu는 하나의 write와 여러개의 read가 동시에 실행되게 해줍니다. 물론 여러개의 write와 여러개의 read가 실행되는게 가장 이상적이지만 그런건 아직 없습니다. rcu처럼 하나의 write와 여러개의 read가 실행되도록하는게 현재로선 가장 최선입니다.
+References
 
-물론 몇가지 제약이 있습니다.
-1. read는 write가 갱신한 최신 데이터를 못볼 수도 있습니다. 즉 갱신 즉시 업데이트가 되는게 아닙니다.
-1. write는 모든 read-lock이 풀릴때까지 기다려야할 수도 있습니다. 그래서 실시간 커널용 rcu는 따로 구현되어있습니다.
-1. 하나의 write만 실행가능하므로 write쓰레드는 spinlock등을 써서 동기화를 해야합니다.
-
-참고자료
-
-http://www2.rdrop.com/users/paulmck/RCU/
-http://www.cs.nyu.edu/~lerner/spring11/proj_rcu.pdf
-http://www.slideshare.net/vh21/yet-another-introduction-of-linux-rcu
+* http://www2.rdrop.com/users/paulmck/RCU/
+* http://www.cs.nyu.edu/~lerner/spring11/proj_rcu.pdf
+* http://www.slideshare.net/vh21/yet-another-introduction-of-linux-rcu
 
 
-##mybrd에서 rcu의 사용 예제
+## How mybrd uses RCU
 
-mybrd에서 rcu를 어떻게 사용했었는지 다시 리뷰하면서 rcu가 뭔지 어떻게 사용해야하는건지를 생각해보겠습니다.
+For example, let us review how mybrd uses RCU.
 
-###mybrd_lookup_page에서 rcu_read_lock사용
+### mybrd_lookup_page uses rcu_read_lock
 
-가장 간단한 코드부터 시작하겠습니다. radix-tree에 특정한 인덱스를 가진 페이지가 있는지 검색하는 mybrd_lookup_page부터 보겠습니다.
+Let us start with the simplest example.
+mybrd_lookup_page uses rcu_read_lock when it finds a page including the target sector.
+
 ```
 static struct page *mybrd_lookup_page(struct mybrd_device *mybrd,
     			      sector_t sector)
@@ -53,11 +49,15 @@ static struct page *mybrd_lookup_page(struct mybrd_device *mybrd,
 	return p;
 }
 ```
-이름만봐도 뭔가 rcu로 보호되는 자원을 읽기 전에 rcu_read_lock을 호출하고, 자원에 대한 접근이 끝나면 rcu_read_unlock을 호출해야한다는걸 알 수 있습니다.
 
-이전에 rcu를 소개할때 분명히 여러개의 read 쓰레드가 동시에 실행될 수 있다고 했는데 왜 lock/unlock이 나오는걸까요? rcu_read_lock/unlock이 뭔지 코드를 한번 보면서 생각해보겠습니다.
+As you can see with the name of the function, rcu_read_lock, you can call rcu_read_lock before reading a resource.
+It looks a little bit weird.
+So far locking is usually for preventing other threads from accessing the resource and makeing only one thread access the resource.
+How does the rcu_read_lock make many read-thread access the resource at the same time and?
 
-먼저 v2.6.11 코드를 한번 보겠습니다.
+Let us check the source code in kernel version 2.6.11.
+It would be the simplest implementation of RCU because RCU was just merged into the kernel.
+
 ```
 /**
  * rcu_read_lock - mark the beginning of an RCU read-side critical section.
@@ -99,7 +99,15 @@ static struct page *mybrd_lookup_page(struct mybrd_device *mybrd,
 ```
 2.6버전의 코드를 보니 그냥 preempt을 막았다가 푸는게 전부네요. lock은 lock이지만, 사실상 같은 자원을 여러개의 쓰레드가 여러개의 코어에서 접근하는걸 막는 lock은 아닙니다.
 
-그럼 v4.4의 코드를 볼까요. rcu에 관한 옵션도 많아지고 복잡해지는데 arch/x86/configs/x86_64_defconfig 에 있는 기본 옵션만 사용한다고 가정하겠습니다. 그래서 CONFIG_PREEMPT_RCU 옵션은 사용하지 않는다고 가정하고 CONFIG_TREE_RCU 옵션을 켰다고 가정합니다.
+So simple.
+It only enables/disables preemption.
+If one thread reads a resource, other threads on other CPUs also can read the resource.
+But any threads on the same CPU cannot read the resource.
+
+Now let us check the implementation of kernel version 4.4.x.
+It becames more complicated but let us assume that we enable CONFIG_TREE_RCU and disable CONFIG_PREEMPT_RCU as arch/x86/configs/x86_64_defconfig sets.
+If we remove code for debugging and disabled options, it would be like following code.
+
 ```
 static inline void rcu_read_lock(void)
 {
@@ -138,6 +146,7 @@ static inline void __rcu_read_unlock(void)
 # define rcu_lock_acquire(a)    	do { } while (0)
 # define rcu_lock_release(a)		do { } while (0)
 ```
+
 
 디버깅코드 등을 빼고 기본 옵션만 골라서 정리하면 위와 같이 됩니다. 결국 v2.6.11 코드와 같이 preempt_disable/enable만 남습니다.
 
