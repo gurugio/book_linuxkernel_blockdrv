@@ -1,5 +1,16 @@
 # read-copy-update (RCU)
-최신 커널에서 점점 더 많이 사용되고, 성능에 큰 영향을 주는 rcu의 코드를 한번 읽어보겠습니다. mybrd 드라이버에서 직접적으로 사용하고 있으니 그냥 넘길 수 없겠지요.
+
+RCU is getting more popular in recent kernel version because it improve performance significantly if you use it correctly.
+Let us check what it is and how it is implemented.
+
+Basically RCU makes one write-thread and many read-thread run concurrently.
+rwlock is similar to run many read-thread run at the same time but rwlock cannot run write-thread and read-thread at the same time.
+Of course, it would be best to have something being enable to run many write-thread and many read-thread but it does not exist at the moment.
+The best solution we have now is RCU to run one write-thread and many read-thread.
+
+Unfortunately there are some constrains:
+1. read-thread cannot read the latest data that the write-thread just has written.
+1. 
 
 기본적으로 rcu는 하나의 write와 여러개의 read쓰레드가 동시에 실행될 수 있게 해줍니다. rwlock과 마찬가지로 여러개의 read가 동작하게 해주는데, rwlock은 write와 read가 동시에 실행되지는 못합니다. 하지만 rcu는 하나의 write와 여러개의 read가 동시에 실행되게 해줍니다. 물론 여러개의 write와 여러개의 read가 실행되는게 가장 이상적이지만 그런건 아직 없습니다. rcu처럼 하나의 write와 여러개의 read가 실행되도록하는게 현재로선 가장 최선입니다.
 
