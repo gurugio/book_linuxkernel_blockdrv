@@ -44,6 +44,7 @@ https://www.kernel.org/doc/gorman/pdf/understand.pdf
 * [wait-queue](wait-queue.md)
 * [spinlock](spinlock.md)
 * [work-queue](work-queue.md)
+* [RCU](read-copy-update.md) (on going)
 
 
 # references
