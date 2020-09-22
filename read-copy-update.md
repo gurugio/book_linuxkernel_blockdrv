@@ -213,7 +213,7 @@ preempt_disable/enable are enought to protect per-cpu data.
 That is why radix_tree_preload/end are necessary along with spinlock.
 
 
-## How RCU uses for the linked list
+## How RCU is uses for the linked list
 
 
 커널에서 rcu를 가장 먼저 적용한 코드가 리스트입니다. 커널에서 많이 사용되는 리스트에 rcu가 적용된다면 커널 전체적으로 큰 성능 향상이 있겠지요. 리스트 코드 자체가 간단하니 rcu가 어떻게 사용되는지를 알아보기에도 좋은 코드이므로 한번 읽어보겠습니다.
