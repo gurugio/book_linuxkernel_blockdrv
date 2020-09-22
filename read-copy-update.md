@@ -97,7 +97,6 @@ It would be the simplest implementation of RCU because RCU was just merged into 
  */
 #define rcu_read_unlock()	preempt_enable()
 ```
-2.6버전의 코드를 보니 그냥 preempt을 막았다가 푸는게 전부네요. lock은 lock이지만, 사실상 같은 자원을 여러개의 쓰레드가 여러개의 코어에서 접근하는걸 막는 lock은 아닙니다.
 
 So simple.
 It only enables/disables preemption.
@@ -147,12 +146,12 @@ static inline void __rcu_read_unlock(void)
 # define rcu_lock_release(a)		do { } while (0)
 ```
 
+After removing extra code, only preempt_disable/enable remain.
 
-디버깅코드 등을 빼고 기본 옵션만 골라서 정리하면 위와 같이 됩니다. 결국 v2.6.11 코드와 같이 preempt_disable/enable만 남습니다.
+### How mybrd_insert_page uses spin_lock/unlock
 
-###mybrd_insert_page에서 spin_lock/unlock사용
-
-mybrd_insert_page는 radix_tree_insert함수를 이용해서 radix-tree에 페이지를 넣습니다. 어떤 락을 쓰는지 볼까요?
+Let us see how mybrd_insert_page function inserts a page into the radix tree with radix_tree_insert function.
+Please note which lock it uses.
 
 ```
 static struct page *mybrd_insert_page(struct mybrd_device *mybrd,
@@ -204,11 +203,18 @@ static struct page *mybrd_insert_page(struct mybrd_device *mybrd,
 	return p;
 }
 ```
-radix-tree에 페이지를 수가하려면 트리 데이터를 수정해야하므로 write에 해당하니 spinlock을 썼습니다. 이전에 rcu 소개할때 말씀드린것과같이 write동작은 한개만 실행하도록 해야하므로 spinlock을써서 한번에 하나의 write가 실행되도록 한 것입니다. 하지만 read에는 spinlock이 없으니, 하나의 write가 실행되는 동시에 여러개의 read가 실행될 수 있습니다.
 
-참고로 radix_tree_preload함수의 코드를 보면 per-cpu데이터를 사용합니다. 그래서 spinlock을 사용하지않고 preempt_disable/enable만 사용해서 동기화를 했습니다. 그래서 spinlock의 critical section밖에 radix_tree_preload/_end가 호출됩니다.
+It uses spinlock to add a page into the radix tree.
+You must use spinlock to write data protected by RCU but there is no lock in code reading data.
+Therefore many threads can read data concurrently but only one thread can write data.
 
-##list에 rcu 적용 예제
+For your information, radix_tree_preload prepares some per-cpu data which will be uses when adding new node into the radix tree.
+preempt_disable/enable are enought to protect per-cpu data.
+That is why radix_tree_preload/end are necessary along with spinlock.
+
+
+## How RCU uses for the linked list
+
 
 커널에서 rcu를 가장 먼저 적용한 코드가 리스트입니다. 커널에서 많이 사용되는 리스트에 rcu가 적용된다면 커널 전체적으로 큰 성능 향상이 있겠지요. 리스트 코드 자체가 간단하니 rcu가 어떻게 사용되는지를 알아보기에도 좋은 코드이므로 한번 읽어보겠습니다.
 
