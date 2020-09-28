@@ -215,14 +215,20 @@ That is why radix_tree_preload/end are necessary along with spinlock.
 
 ## How RCU is uses for the linked list
 
+Actually radix-tree is not a good example for RCU because radix-tree functions are wrapping and hiding some code to show how to use RCU.
+The first module in the kernel applying RCU is the linked list.
+The linked list is so common in the kernel so that it gained big performance improvement after applying RCU.
+And code is simple and good to show how to use RCU.
 
-커널에서 rcu를 가장 먼저 적용한 코드가 리스트입니다. 커널에서 많이 사용되는 리스트에 rcu가 적용된다면 커널 전체적으로 큰 성능 향상이 있겠지요. 리스트 코드 자체가 간단하니 rcu가 어떻게 사용되는지를 알아보기에도 좋은 코드이므로 한번 읽어보겠습니다.
+With RCU, many read-thread can run in parallel.
+But write-thread calling list_add_rcu or list_del_rcu must access the list after locking with spinlock or mutexlock.
 
-어느순간 헷갈릴 수도 있는데 rcu는 여러개의 읽기 쓰레드만 동시에 실행될 수 있다는걸 주의하셔야합니다. list_add_rcu나 list_del_rcu등은 리스트를 보호하는 스핀락 등을 잠근 후에 호출되야합니다. 그리고 list_add_rcu나 list_del_rcu가 호출되는 순간에도 리스트를 읽는 쓰레드는 rcu_read_lock/unlock만 호출하면서 여러개의 쓰레드가 동시에 리스트에 접근하고 있다는걸 주의해야합니다.
+The most common function to read the linked list is list_for_each_entry.
+There is a RCU version of it: list_for_each_entry_rcu.
+It reads the list so that there could be many threads reading the lisk.
 
-리스트를 읽는 대표적인 방법이 list_for_each_entry 매크로를 쓰는 것입니다. 이 매크로도 rcu버전이 따로 있으므로, 리스트를 읽는 쓰레드는 list_for_each_entry_rcu를 써야합니다. 어쨌든 바로 list_for_each_entry_rcu를 사용하는 쓰레드가 여러개가 동시에 실행될 수 있다는 것입니다.
+Let us see the code of RCU list in include/linux/rculist.h
 
-다음은 include/linux/rculist.h파일에서 주요 함수들을 복사해온 것입니다.
 ```
 static inline void INIT_LIST_HEAD_RCU(struct list_head *list)
 {
@@ -261,12 +267,26 @@ static inline void __list_del(struct list_head * prev, struct list_head * next)
     for (pos = list_entry_rcu((head)->next, typeof(*pos), member); \
 		&pos->member != (head); \
 		pos = list_entry_rcu(pos->member.next, typeof(*pos), member))
+
+#define rcu_assign_pointer(p, v)					      \
+do {									      \
+	uintptr_t _r_a_p__v = (uintptr_t)(v);				      \
+	rcu_check_sparse(p, __rcu);					      \
+									      \
+	if (__builtin_constant_p(v) && (_r_a_p__v) == (uintptr_t)NULL)	      \
+		WRITE_ONCE((p), (typeof(p))(_r_a_p__v));		      \
+	else								      \
+		smp_store_release(&p, RCU_INITIALIZER((typeof(p))_r_a_p__v)); \
+} while (0)
 ```
-리스트를 처리하는 add,del 등의 함수들마다 rcu가 적용된 함수들이 있는데 리스트의 헤드를 초기화하는 INIT_LIST_HEAD도 rcu버전이 따로 있습니다. 사실 리스트의 헤드나 노드 하나를 동시에 접근하는 경우가 드물지만, 다른 데이터구조에 리스트가 포함된 경우가 있을 수 있으므로 필요할 때도 있을 것입니다. 보통은 INIT_LIST_HEAD로 초기화해도 됩니다.
 
-list_next_rcu도 따로 구현은 됐지만 ```__rcu```라는 컴파일러 attribute 만 빼면 따로 구현할 필요는 없어보입니다. ```__rcu```는 sparse라는 커널 코드의 정적 분석을 위한 툴의 분석을 돕기 위해 정의된 것이므로 지금은 신경쓸 필요가 없습니다.
+There is a rcu version of INIT_LIST_HEAD: INIT_LIST_HEAD_RCU.
+list_next_rcu is actually the same to list_next except ```__rcu``` attribute for compiler.
+That is for sparse tool which does static analysis of kernel code and does nothing in runtime.
+Let us ignore it at the moment.
 
-list_add_rcu를 보기전에 list_add와 무슨 차이가 있는지 알아보기위해 list_add부터 보겠습니다. list_add는 ```__list_add```로 구현되므로 ```__list_add```를 보겠습니다.
+First let us check list_add which directly call ```__list_add```.
+
 ```
 static inline void __list_add(struct list_head *new,
     		      struct list_head *prev,
@@ -278,22 +298,33 @@ static inline void __list_add(struct list_head *new,
 	prev->next = new;
 }
 ```
-new노드를 리스트에 추가하기전에 먼저 next->prev포인터를 수정합니다. 만약 락이 없다면 리스트를 역방향으로 순회하던 쓰레드가 next->prev를 읽고 new 노드로 넘어오는데, new->prev 포인터는 아직 초기화가 안되었으므로 커널 패닉이 발생할 것입니다.
 
-list_add_rcu는 ```__list_add_rcu```로 구현됩니다. ```__list_add_rcu```는 순서대로 보면
-* 새로 추가될 new 노드 초기화
-* smp_mb: new노드 초기화코드와 prev/next 노드 초기화 코드의 순서가 섞이지 않게 mb를 추가함
-* WRITE_ONCE(prev->next, new)
- * 만약 어떤 쓰레드가 리스트를 정방향으로 순회하던중 prev를 읽고있었다면, 이제부터 new 노드에 접근이 가능함
- * 만약 smp_mb 코드가 없었다면 이 쓰레드가 new 노드에 접근이 되었다해도, new->next 포인터가 초기화되지 않았을 수도 있음
- * WRITE_ONCE매크로를 써서 컴파일러가 포인터를 레지스터에 저장하지못하도록해서 atomic하게 메모리에 있는 포인터 값을 수정하도록 했음
+The first line set next->prev pointer to the new node.
+Let us assume that there is no lock, and one thread just sets next->prev to new while another thread is reading the list reversely, 
+The second thread reads next->prev and new->prev.
+Reading new->prev would generate kernel panic because next->prev is not initialized yet.
+
+Let us check how list_add_rcu is different.
+list_add_rcu directly calls ```__list_add_rcu``` that is doing:
+* initialize new node
+* smp_store_release is a combination of smp_bm and WRITE_ONDE.
+ * insert memory barrier smp_mb to prevent re-ordering of new node setting and reading: reading new node is always executed after setting
+ * WRITE_ONCE(prev->next, new)
+ * If a thread was reading the list in order and accessing prev node, now it can access new node.
+ * The memory barrier guarantees that new node is always initialized correctly and has next and prev pointers.
+ * WRITE_ONCE macro forces compiler to write memory atomically.
 * next->prev = new
- * 만약 어떤 쓰레드가 리스트를 역방향으로 순회하던중 next를 읽고있었다면, 이제부터 new노드에 접근이 가능함
- * prev와 next 사이에는 smp_mb가 없음. 즉 prev와 next의 초기화는 순서가 바뀌어도 상관없음
+ * If a thread was reading the list in reverse order and accessing next node, it can access new node now.
+ * No smp_mb between ```new->prev = prev``` and ```prev->next = new```. It does not matter if two lines are done reversely.
+ 
 
-smp_mb와 WRITE_ONCE를 합친게 smp_store_release입니다. 멀티코어환경에서 확실하게 메모리 값을 바꾸는 매크로입니다.
+It is not easy to understand at first.
+It could be good to draw some picture for each step and check how two threads reading in order and reverse order can read the list correctly.
+You need to understand the magic of the memory barrier and WRITE_ONCE macro which is just a volatile memory access of C language.
 
-list_del_rcu는 ```__list_del```을 호출합니다. ```__list_del```은 list_del에서도 호출하는 함수입니다. 즉 list_del_rcu는 사실상 list_del과 같지만 함수의 짝을 맞추기위해 만든 것입니다. 그리고 특별히 주의해야할게 더 있습니다. 아래에 list_del_rcu의 주석을 보겠습니다.
+list_del_rcu is actually the same to list_del.
+list_del_rcu is implemented to make a pair of list_add_rcu.
+
 ```
  * Note that the caller is not permitted to immediately free
  * the newly deleted entry.  Instead, either synchronize_rcu()
@@ -306,9 +337,13 @@ static inline void list_del_rcu(struct list_head *entry)
 	entry->prev = LIST_POISON2;
 }
 ```
-list_del_rcu로 하나의 노드를 리스트에서 제거한 후 곧바로 kfree등으로 노드의 메모리를 해지하면 안된다는 것입니다. unlock을 하는것과 별개로 synchronize_rcu나 call_rcu를 호출 한 후에 노드의 메모리를 해지하라는 것입니다. 
 
-다음은 thin_dtr이라는 함수에서 list_del_rcu를 사용하는 코드입니다.
+But you must notice that there is something you must remember.
+As you see in the comment, you should not free the memory of removed node immediately after removing with list_del_rcu.
+The memory can be freed after calling synchronize_rcu or call_rcu.
+
+Below is an example to show how to use list_del_rcu.
+
 ```
 static void thin_dtr(struct dm_target *ti)
 {
