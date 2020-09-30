@@ -368,9 +368,14 @@ Finally list_for_each_entry_rcu is implemented with list_entry_rcu.
 
 ## synchronize_rcu (synchronize_kernel in v2.6)
 
-list_del_rcu의 주석에서 "grace period"라는게 나옵니다. 바로 아래 그림처럼 rcu로 보호되는 객체를 해지하고싶지만, 이미 객체에 접근하고 있는 read 쓰레드들이 모두 종료될때까지 기다리는 시간을 grace period라고 부릅니다. 이미 객체가 변경된 다음에 read하는 쓰레드들은 이때 이미 바뀐 객체를 보고있을 것이므로 상관이 없습니다.
+You can see "grace period" in the comment of list_del_rcu.
+As below picture shows, the grace period is a time that there are some threads reading the RCU-protected object and a thread wanting to change the object waits all reading threads finish.
+After the grace period, writing thread change the object and then new arriving reading thread reads only changed data.
 
-예를 들어 리스트에서 list_del_rcu를 써서 하나의 노드를 제거했을 때 rcu_read_lock을 호출하고 이미 리스트를 순회중인 쓰레드들이 있을건데 이 쓰레드들이 모두 rcu_read_unlock을 호출하면 grace period가 끝난 것입니다. list_del_rcu가 호출된 뒤에 rcu_read_lock을 호출하고 리스트에 접근한 쓰레드들은 이미 바뀐 리스트를 보고있을 것이므로 삭제된 노드가 메모리에서 해지되도 상관이 없겠지요. 하지만 list_del_rcu가 호출되기전에 리스트에 접근하던 쓰레드들은 삭제된 노드에 접근할 수 있으므로, 모든 쓰레드가 rcu_read_unlodk을 호출한 뒤에 노드의 메모리가 해지할 수 있습니다.
+For example, thread-A calls list_del_rcu and removes one node while some threads are traversing the list.
+Some reading thread can be accessing the node removed from the list by thread-A but it is ok because the removed node is not freed.
+Some reading thread can traverse the list after list_del_rcu call of thread-A but it is ok because they will follow the changed list.
+After all reading threads calls rcu_read_unlock and the grace period ends, thread-A can continue to free the removed node because no thread access the removed list.
 
 ![](https://static.lwn.net/images/ns/kernel/rcu/GracePeriodBad.png)
 grace period
