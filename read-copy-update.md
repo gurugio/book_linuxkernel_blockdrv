@@ -369,17 +369,27 @@ Finally list_for_each_entry_rcu is implemented with list_entry_rcu.
 ## synchronize_rcu (synchronize_kernel in v2.6)
 
 You can see "grace period" in the comment of list_del_rcu.
-As below picture shows, the grace period is a time that there are some threads reading the RCU-protected object and a thread wanting to change the object waits all reading threads finish.
-After the grace period, writing thread change the object and then new arriving reading thread reads only changed data.
+As below picture shows, the grace period is a time that there are some threads reading the RCU-protected object and a thread wanting to free the object waits all reading threads finish.
 
-For example, thread-A calls list_del_rcu and removes one node while some threads are traversing the list.
-Some reading thread can be accessing the node removed from the list by thread-A but it is ok because the removed node is not freed.
-Some reading thread can traverse the list after list_del_rcu call of thread-A but it is ok because they will follow the changed list.
-After all reading threads calls rcu_read_unlock and the grace period ends, thread-A can continue to free the removed node because no thread access the removed list.
+For example, thread-A calls list_del_rcu and move one node out of the list while some threads are traversing the list.
+Some reading thread are accessing the moved node but it is ok because the removed node is not freed.
+When all reading threads calls rcu_read_unlock the grace period ends and then thread-A can continue to free the removed node because no thread access the removed list.
+Some reading threads can start traversing the list after synchronize_rcu call of thread-A but it is ok because they will follow the changed list.
+So the grace period does not wait for the new reading threads arrived after synchronize_rcu.
 
 ![](https://static.lwn.net/images/ns/kernel/rcu/GracePeriodBad.png)
 grace period
 
+How does the synchronize_rcu detect all reading threads on other CPUs finish?
+
+In kernl v2.6, rcu_read_unlock is enabling preemption so that there should be context-switching between processes or kernel lever and user level.
+RCU module registers a per-cpu tasklet executed by the context-switching.
+Each tasklet of each CPU marks that there is a context-switching of the CPU.
+When all CPUs execute the context-switching it means the grace period ends and it wakes up the thread calling synchronize_rcu.
+
+Latest kernel versions have different and complicated RCU implementation.
+Kernel 2.6 has the simplest implementation of the RCU.
+You can start with kernel 2.6 to understand the implementation of the RCU.
 
 Reference
 * https://lwn.net/Articles/253651/
