@@ -358,11 +358,13 @@ static void thin_dtr(struct dm_target *ti)
 	thin_put(tc);
 	wait_for_completion(&tc->can_destroy);
 ```
-thin_put함수가 tc라는 객체의 메모리를 해지하는 함수입니다. 이와같이 락을 잡고 리스트를 수정한 후에 리스트 노드의 메모리가 해지되기 전에 synchronize_rcu를 호출해야합니다. critical section은 작을 수록 좋으므로 당연히 synchronize_rcu이전에 락을 풀어야겠지요.
 
-리스트 노드의 포인터에서 리스트를 포함한 객체의 포인터를 얻어내는 list_entry 매크로도 rcu 버전이 있습니다. rcu버전이므로 메모리 베리어와 READ_ONCE등을 써서 포인터를 읽어야겠지요. 그런 처리를 lockless_dereference매크로에서 처리합니다.
+It gets lock and deletes a RCU-list node, and then calls synchronize_rcu before freeing memory of the deleted node.
+The thin_put function frees the memory of tc object.
 
-마지막으로 list_for_each_entry매크로도 rcu버전에서는 list_entry_rcu를 사용하도록 바뀐것을 알 수 있습니다.
+RCU version of list_entry is list_entry_rcu.
+It reads a pointer of the node with memory barrier and READ_ONCE macro that are wrapped by lockless_dereference macro.
+Finally list_for_each_entry_rcu is implemented with list_entry_rcu.
 
 ## synchronize_rcu (synchronize_kernel in v2.6)
 
