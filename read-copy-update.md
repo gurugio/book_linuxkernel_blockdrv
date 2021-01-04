@@ -11,7 +11,7 @@ The best solution we have now is RCU to run one write-thread and many read-threa
 Unfortunately there are some constrains:
 1. read-thread cannot read the latest data that the write-thread just has written.
 1. write-thread waits for all read-lock to be unlocked.
-1. Only one write-thread can run. You must use spinlock to synchronize data for many write-thread.
+1. Only one write-thread can run as while many read-thread are running. You must use spinlock to synchronize data for many write-thread.
 
 References
 
