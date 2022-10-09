@@ -49,7 +49,7 @@ http://busybox.net
 Build can be done with following commands.
 
 ```
-# make defconf
+# make defconfig
 # make menuconfig
 # make
 ```
@@ -74,6 +74,7 @@ Now we are ready. Run make now.
 After all, ``_install`` directory will be created.
 
 ```
+# make CONFIG_PREFIX=./_install install
 # ls _install/
 bin  linuxrc  sbin  usr
 ```
