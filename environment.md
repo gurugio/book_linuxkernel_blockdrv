@@ -238,6 +238,8 @@ Let me describe briefly.
 * make x86_64_defconfig: enable options in arch/x86/configs/x86_64_defconfig file
   * x86_64_defconfig file has common options for INTEL/AMD processor
 * make kvmconfig: add several options for qemu
+  * Recent kernel has changed the name into kernel/configs/kvm_guest.config
+  * Or you could use kernel/configs/qemu-busybox-min.config
 * make bzImage: build only kernel
   * "make" will build kernel and drivers. But building drivers takes much more time than kernel. And we don't need drivers.
   * "make bzImage" will build only kernel image
@@ -258,6 +260,7 @@ Let me introduce the options.
 * -initrd: location of filesystem image
 * -nographic -append "console=ttyS0 init=/init": print the kernel booting message on your terminal
   * Without this option, you cannot see anything.
+  * If you used kernel/configs/qemu-busybox-min.config, you don't need to add it because the config file already has it.
 * -enable-kvm: use kvm driver. It is not mandatory but it makes booting fast.
 
 You can see the booting message of Linux kernel.
