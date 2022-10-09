@@ -234,6 +234,13 @@ $ make kvmconfig
 $ make -j8 bzImage
 ```
 
+For kernel 5.x:
+```
+$ make x86_64_defconfig
+$ make defconfig qemu-busybox-min.config
+$ make -j8 bzImage
+```
+
 Let me describe briefly.
 * make x86_64_defconfig: enable options in arch/x86/configs/x86_64_defconfig file
   * x86_64_defconfig file has common options for INTEL/AMD processor
