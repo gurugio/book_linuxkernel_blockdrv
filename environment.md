@@ -45,6 +45,39 @@ I will describe only a few options that are used in this document.
 Qemu has so many powerful features like other virtualization tools like Vmware and VirtualBox.
 Please refer to qemu manual for the detail.
 
+
+# Install the cross-compiler for ARM64 build
+
+1. Download cross-compiler from https://developer.arm.com/downloads/-/gnu-a
+If you use X86 host machine, download a file:
+x86_64 Linux hosted cross compilers
+  AArch64 GNU/Linux target (aarch64-none-linux-gnu)
+    gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu.tar.xz
+
+2. Install the compiler
+```
+gkim@gkim-laptop:/opt$ sudo cp ~/Downloads/gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu.tar.xz .
+gkim@gkim-laptop:/opt$ sudo tar xf gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu.tar.xz
+gkim@gkim-laptop:/opt$ /opt/gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-gcc --version
+aarch64-none-linux-gnu-gcc (GNU Toolchain for the A-profile Architecture 10.3-2021.07 (arm-10.29)) 10.3.1 20210621
+Copyright (C) 2020 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+
+3. Set PATH
+```
+cat >> .bashrc
+PATH=$PATH:/opt/gcc-arm-10.3-2021.07-x86_64-aarch64-none-linux-gnu/bin
+
+gkim@gkim-laptop:~$ source .bashrc
+gkim@gkim-laptop:~$ aarch64-none-linux-gnu-gcc --version
+aarch64-none-linux-gnu-gcc (GNU Toolchain for the A-profile Architecture 10.3-2021.07 (arm-10.29)) 10.3.1 20210621
+Copyright (C) 2020 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+
 # make boot filesystem, initramfs, with busybox
 
 Kernel can boot but that's all. We cannot do anything unless we have tools such like shell, dd and ls. It will take huge amount of time if we download source of each tool and build and install. So our dear hackers already made a toolset including essential tools for Linux OS. It is busybox. With the busybox, we can make a simple filesystem and the kernel can execute shell in the filesystem.
