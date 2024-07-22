@@ -229,12 +229,14 @@ And also we don't need any kernel drivers. So we can reduce amount of building t
 Following commands are for kernel build.
 
 ```
+$ sudo apt install libncurses-dev gawk flex bison openssl libssl-dev libelf-dev
 $ make x86_64_defconfig
 $ make kvmconfig
 $ make -j8 bzImage
 ```
 
 For kernel 5.x:
+* Use qemu-busybox-min.config to add options for Qemu booting
 ```
 $ make x86_64_defconfig
 $ make defconfig qemu-busybox-min.config
@@ -251,6 +253,29 @@ Let me describe briefly.
   * "make" will build kernel and drivers. But building drivers takes much more time than kernel. And we don't need drivers.
   * "make bzImage" will build only kernel image
   * -j8: use 8 cores. You can set the number of cores in your system. More cores takes less time.
+ 
+Below is how to build the kernel with ARM64 cross-compiler.
+* Download cross-compiler before the build
+```
+$ make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
+  HOSTCC  scripts/basic/fixdep
+  HOSTCC  scripts/kconfig/conf.o
+  SHIPPED scripts/kconfig/zconf.tab.c
+  SHIPPED scripts/kconfig/zconf.lex.c
+  SHIPPED scripts/kconfig/zconf.hash.c
+  HOSTCC  scripts/kconfig/zconf.tab.o
+  HOSTLD  scripts/kconfig/conf
+*** Default configuration is based on 'defconfig'
+#
+# configuration written to .config
+#
+
+$ make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- menuconfig
+......
+
+$ make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j12
+```
+
 
 After build, please check arch/x86/boot/bzImage file exists. It is the kernel image file.
 
@@ -268,6 +293,22 @@ Let me introduce the options.
 * -nographic -append "console=ttyS0 init=/init": print the kernel booting message on your terminal
   * Without this option, you cannot see anything.
 * -enable-kvm: use kvm driver. It is not mandatory but it makes booting fast.
+
+For ARM64 platform, you can use below command.
+* Change kernel and initrd option to your files location
+```
+qemu-system-aarch64 \
+  -M virt \
+  -cpu cortex-a57 \
+  -smp 1 \
+  -m 64 \
+  -nographic \
+  -kernel ./linux-mainstream/arch/arm64/boot/Image  \
+  -initrd ./busybox-1.36.1/_install/initramfs-busybox-arm64.cpio.gz \
+  -append "console=ttyAMA0 rdinit=/init" \
+  -device virtio-scsi-device
+```
+
 
 You can see the booting message of Linux kernel.
 ```
