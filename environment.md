@@ -361,7 +361,8 @@ qemu-system-aarch64 \
   -device virtio-scsi-device
 ```
 
-For busybox 1.36.1, console=ttyS0 does not work. Use console=ttyAMA0 instead.
+For ARM/ARM64 platform console=ttyS0 might not work. Use console=ttyAMA0 instead.
+* AMA0 is the first serial port of ARM/ARM64 platform.
 
 
 You can see the booting message of Linux kernel.
