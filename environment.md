@@ -34,6 +34,13 @@ Just install qemu tool. It depends on the distribution you use. For example, you
 /usr/bin/qemu-system-x86_64
 ```
 
+For ARM/ARM64 platform, install "qemu-system-arm".
+```
+$ sudo apt install qemu-system-arm
+$ which qemu-system-aarch64
+/usr/bin/qemu-system-aarch64
+```
+
 I will describe only a few options that are used in this document.
 Qemu has so many powerful features like other virtualization tools like Vmware and VirtualBox.
 Please refer to qemu manual for the detail.
@@ -311,15 +318,17 @@ For ARM64 platform, you can use below command.
 ```
 qemu-system-aarch64 \
   -M virt \
-  -cpu cortex-a57 \
+  -cpu max \
   -smp 1 \
   -m 64 \
   -nographic \
-  -kernel ./linux-mainstream/arch/arm64/boot/Image  \
-  -initrd ./busybox-1.36.1/_install/initramfs-busybox-arm64.cpio.gz \
-  -append "console=ttyAMA0 rdinit=/init" \
+  -kernel ./linux/arch/arm64/boot/Image  \
+  -initrd ./busybox-1.36.1/initramfs-busybox-arm64.cpio.gz \
+  -append "console=ttyAMA0 init=/init" \
   -device virtio-scsi-device
 ```
+
+For busybox 1.36.1, console=ttyS0 does not work. Use console=ttyAMA0 instead.
 
 
 You can see the booting message of Linux kernel.
