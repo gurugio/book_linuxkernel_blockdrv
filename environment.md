@@ -54,6 +54,13 @@ Build can be done with following commands.
 # make
 ```
 
+For ARM64 platform, use below commands.
+```
+# make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
+# make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- menuconfig
+# make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu-
+```
+
 The busybox is frequently used with Linux kernel. So it has the same build interface "make menuconfig".
 You MUST set one option to make a bootable filesystem with the busybox.
 You can find the option with following sequence.
@@ -80,6 +87,11 @@ bin  linuxrc  sbin  usr
 ```
 You can see several directories in there.
 Let us check what are there in ``_install/bin`` directory.
+
+For ARM64,
+```
+# make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- CONFIG_PREFIX=./_install install
+```
 
 ```
 # ls _install/bin -l
