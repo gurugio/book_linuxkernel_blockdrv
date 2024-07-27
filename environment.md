@@ -359,10 +359,23 @@ qemu-system-aarch64 \
   -initrd ./busybox-1.36.1/initramfs-busybox-arm64.cpio.gz \
   -append "console=ttyAMA0 init=/init" \
   -device virtio-scsi-device
+
+gkim@gkim-laptop:~/study/iamroot$ cat go.sh 
+qemu-system-aarch64 \
+  -M virt \
+  -cpu cortex-a57 \
+  -smp 1 \
+  -m 64 \
+  -nographic \
+  -kernel ./linux/arch/arm64/boot/Image  \
+  -initrd ./busybox-1.36.1/initramfs-busybox-arm64.cpio.gz \
+  -append "console=ttyAMA0 rdinit=/init"
+
 ```
 
 For ARM/ARM64 platform console=ttyS0 might not work. Use console=ttyAMA0 instead.
 * AMA0 is the first serial port of ARM/ARM64 platform.
+Some kernel version (v4.6) does not work with "-cpu max" option. Use cortex-a57 instead.
 
 
 You can see the booting message of Linux kernel.
